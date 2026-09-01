@@ -120,7 +120,7 @@ export async function getAssignment(client: MoodleClient, assignmentId: number):
 export function registerAssignmentTools(server: McpServer, client: MoodleClient): void {
   server.tool(
     "moodle_list_assignments",
-    "List all assignments in a course, grouped by the course's sections, with due dates and grade info. Returns assignment IDs for use with moodle_get_assignment.",
+    "List all assignments the student has in a course, with due dates and max grades. Use this to answer 'what assignments do I have' or 'when is X due'. Returns assignment IDs for use with moodle_get_assignment.",
     { courseId: z.number().describe("Course ID from moodle_list_courses") },
     async ({ courseId }) => ({
       content: [{ type: "text" as const, text: await listAssignments(client, courseId) }],
@@ -129,7 +129,7 @@ export function registerAssignmentTools(server: McpServer, client: MoodleClient)
 
   server.tool(
     "moodle_get_assignment",
-    "Get submission status and grade feedback for a specific assignment.",
+    "Check the student's own submission status and grade feedback for one assignment — 'have I submitted this', 'was it graded', 'what feedback did I get'.",
     { assignmentId: z.number().describe("Assignment ID from moodle_list_assignments") },
     async ({ assignmentId }) => ({
       content: [{ type: "text" as const, text: await getAssignment(client, assignmentId) }],

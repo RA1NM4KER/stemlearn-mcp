@@ -119,7 +119,7 @@ export async function getQuizAttempts(client: MoodleClient, quizId: number): Pro
 export function registerQuizTools(server: McpServer, client: MoodleClient): void {
   server.tool(
     "moodle_list_quizzes",
-    "List all quizzes in a course, grouped by section, with time limits, attempt counts, and open/close dates.",
+    "List the quizzes in one of the student's courses, with time limits, allowed attempts, and open/close dates.",
     { courseId: z.number().describe("Course ID from moodle_list_courses") },
     async ({ courseId }) => ({
       content: [{ type: "text" as const, text: await listQuizzes(client, courseId) }],
@@ -128,7 +128,7 @@ export function registerQuizTools(server: McpServer, client: MoodleClient): void
 
   server.tool(
     "moodle_get_quiz_attempts",
-    "Get your past attempt history for a specific quiz — grades, states, and timing.",
+    "Get the student's own past attempt history for one quiz — grades, states, and timing.",
     { quizId: z.number().describe("Quiz ID from moodle_list_quizzes") },
     async ({ quizId }) => ({
       content: [{ type: "text" as const, text: await getQuizAttempts(client, quizId) }],

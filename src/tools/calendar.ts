@@ -83,7 +83,7 @@ export async function getCalendarEvents(
 export function registerCalendarTools(server: McpServer, client: MoodleClient): void {
   server.tool(
     "moodle_get_calendar_events",
-    "Get upcoming calendar events (assignments due, quizzes opening, etc.), optionally filtered to one course. Defaults to the next 30 days.",
+    "Get the student's upcoming deadlines and calendar events (assignments due, quizzes opening, etc.) across their courses, optionally filtered to one course. Good for 'what's coming up' / 'what's due this week'. Defaults to the next 30 days.",
     {
       courseId: z.number().optional().describe("Filter to a specific course ID (optional)"),
       daysAhead: z.number().optional().describe("How many days ahead to look (default: 30)"),

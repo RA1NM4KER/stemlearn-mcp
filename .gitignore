@@ -4,8 +4,6 @@ dist/
 .env
 .env.*
 .claude
-cours1-logique.html
-extract_slides.py
-docs/superpowers/plans/2026-04-14-moodle-mcp.md
-docs/superpowers/plans/2026-04-15-moodle-mcp-v0.1.0.md
-build_vault.py
+
+# Moodle auth token — never commit. chmod 600, written by `npm run auth`.
+.auth/

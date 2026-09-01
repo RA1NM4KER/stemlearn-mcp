@@ -65,7 +65,7 @@ export async function getNotifications(client: MoodleClient, limit = 20): Promis
 export function registerNotificationTools(server: McpServer, client: MoodleClient): void {
   server.tool(
     "moodle_get_notifications",
-    "Get your recent Moodle notifications (grade returns, assignment feedback, forum replies, etc.). Unread items are marked with 🔵.",
+    "Get the student's recent Moodle notifications (grade returns, assignment feedback, forum replies, deadline reminders, etc.). Unread items are marked with 🔵.",
     { limit: z.number().optional().describe("Number of notifications to fetch (default: 20)") },
     async ({ limit }) => ({
       content: [{ type: "text" as const, text: await getNotifications(client, limit) }],

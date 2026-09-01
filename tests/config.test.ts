@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { normalizeUrl, getConfig } from "../src/config.js";
 
 describe("normalizeUrl", () => {
@@ -28,6 +31,9 @@ describe("getConfig", () => {
 
   beforeEach(() => {
     process.env = { ...origEnv };
+    // Point at a path that can't exist, so these tests are isolated from
+    // any real .auth/token.json a developer has authenticated with.
+    process.env.MOODLE_MCP_TOKEN_FILE = "/nonexistent/.auth/token.json";
   });
 
   afterEach(() => {
@@ -72,5 +78,47 @@ describe("getConfig", () => {
     process.env.MOODLE_TOKEN = "abc123";
     const config = getConfig();
     expect(config.baseUrl).toBe("https://moodle.uni.edu");
+  });
+});
+
+describe("getConfig with .auth/token.json (npm run auth output)", () => {
+  const origEnv = process.env;
+  const tmpFile = path.join(os.tmpdir(), `moodle-mcp-config-test-${process.pid}.json`);
+
+  beforeEach(() => {
+    process.env = { ...origEnv };
+    delete process.env.MOODLE_URL;
+    delete process.env.MOODLE_TOKEN;
+    delete process.env.MOODLE_USERNAME;
+    delete process.env.MOODLE_PASSWORD;
+    process.env.MOODLE_MCP_TOKEN_FILE = tmpFile;
+  });
+
+  afterEach(() => {
+    process.env = origEnv;
+    fs.rmSync(tmpFile, { force: true });
+  });
+
+  it("uses site + token from the token file when no env vars are set", () => {
+    fs.writeFileSync(tmpFile, JSON.stringify({ site: "https://moodle.uni.edu", token: "filetoken" }));
+    const config = getConfig();
+    expect(config.baseUrl).toBe("https://moodle.uni.edu");
+    expect(config.token).toBe("filetoken");
+  });
+
+  it("lets MOODLE_TOKEN override the token file's token", () => {
+    fs.writeFileSync(tmpFile, JSON.stringify({ site: "https://moodle.uni.edu", token: "filetoken" }));
+    process.env.MOODLE_TOKEN = "envtoken";
+    const config = getConfig();
+    expect(config.token).toBe("envtoken");
+  });
+
+  it("throws with a `npm run auth` hint when the token file is missing and no env vars are set", () => {
+    expect(() => getConfig()).toThrow(/npm run auth/);
+  });
+
+  it("ignores a malformed token file and falls through to the missing-config error", () => {
+    fs.writeFileSync(tmpFile, "not json");
+    expect(() => getConfig()).toThrow(/npm run auth/);
   });
 });

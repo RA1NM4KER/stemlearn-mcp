@@ -1,10 +1,10 @@
 {
-  "name": "moodle-mcp",
-  "version": "0.2.0",
-  "description": "MCP server for Moodle — give Claude access to your courses, files, grades, and more. Build Obsidian study vaults from lecture notes in one command.",
+  "name": "stemlearn-mcp",
+  "version": "0.1.0",
+  "description": "Student-focused, read-only MCP server for STEMLearn (Stellenbosch University's Moodle) — courses, deadlines, grades, and course files. Fork of 1alexandrer/moodle-mcp.",
   "type": "module",
   "bin": {
-    "moodle-mcp": "./dist/server.js"
+    "stemlearn-mcp": "./dist/server.js"
   },
   "files": [
     "dist",
@@ -13,7 +13,9 @@
     "manifest.json"
   ],
   "scripts": {
+    "auth": "node scripts/auth.mjs",
     "build": "tsc",
+    "start": "npm run build && node dist/server.js",
     "deploy": "wrangler deploy",
     "dev": "npx @modelcontextprotocol/inspector node dist/server.js",
     "test": "vitest run",
@@ -26,6 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "playwright": "^1.62.1",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0",
     "wrangler": "^4.84.1"
@@ -40,15 +43,8 @@
     "claude",
     "education",
     "lms",
-    "obsidian",
-    "study"
+    "stemlearn",
+    "student"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/1alexandrer/moodle-mcp.git"
-  },
-  "homepage": "https://github.com/1alexandrer/moodle-mcp#readme",
-  "bugs": {
-    "url": "https://github.com/1alexandrer/moodle-mcp/issues"
-  }
+  "private": true
 }

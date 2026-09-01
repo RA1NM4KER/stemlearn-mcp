@@ -57,14 +57,14 @@ export async function getCourse(client: MoodleClient, courseId: number): Promise
 export function registerCourseTools(server: McpServer, client: MoodleClient): void {
   server.tool(
     "moodle_list_courses",
-    "List all Moodle courses you are enrolled in",
+    "List all courses the student is currently enrolled in. Usually the first call to make — gives the course IDs every other tool needs.",
     {},
     async () => ({ content: [{ type: "text" as const, text: await listCourses(client) }] })
   );
 
   server.tool(
     "moodle_get_course",
-    "Get the sections and modules of a specific course. Use moodle_list_courses first to get course IDs.",
+    "Get the full structure of one course — its sections/weeks and every activity/resource in them. Use moodle_list_courses first to get the course ID.",
     { courseId: z.number().describe("Course ID from moodle_list_courses") },
     async ({ courseId }) => ({
       content: [{ type: "text" as const, text: await getCourse(client, courseId) }],

@@ -32,7 +32,7 @@ export class MoodleClient {
   readonly maxFileBytes: number;
 
   private constructor(
-    private readonly baseUrl: string,
+    readonly baseUrl: string,
     private readonly token: string,
     maxFileBytes: number,
   ) {
@@ -94,7 +94,16 @@ export class MoodleClient {
       wstoken: this.token,
       wsfunction,
       moodlewsrestformat: "json",
-      ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+      // Moodle's PARAM_BOOL rejects the literal strings "true"/"false" that
+      // String(v) would produce — it wants "1"/"0" (confirmed against a real
+      // Moodle server: message_popup_get_popup_notifications with
+      // newestfirst="true" -> invalidparameter; newestfirst="1" -> works).
+      ...Object.fromEntries(
+        Object.entries(params).map(([k, v]) => [
+          k,
+          typeof v === "boolean" ? (v ? "1" : "0") : String(v),
+        ]),
+      ),
     });
     const res = await fetch(url, { method: "POST", body });
     if (!res.ok) throw new Error(`HTTP ${res.status} from Moodle API`);
@@ -106,7 +115,9 @@ export class MoodleClient {
         );
       }
       if (data.errorcode === "invalidtoken") {
-        throw new Error("Invalid Moodle token. Check your MOODLE_TOKEN value.");
+        throw new Error(
+          "Invalid or expired Moodle token. Run `npm run auth` to sign in again and get a fresh one."
+        );
       }
       throw new Error(`Moodle API error (${data.errorcode ?? "unknown"}): ${data.message ?? "No message"}`);
     }

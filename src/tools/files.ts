@@ -90,7 +90,7 @@ async function listResources(client: MoodleClient, courseId: number): Promise<st
 export function registerFileTools(server: McpServer, client: MoodleClient): void {
   server.tool(
     "moodle_list_resources",
-    "List all downloadable files and links in a course, grouped by the course's own sections (weeks, chapters, topics — as defined by the professor). Each file gets an opaque fileId you pass to moodle_download_file to read contents. External URL-module links are shown as-is.",
+    "List the course materials (lecture slides, PDFs, notes, links) available to the student in a course, grouped by the course's own sections (weeks, chapters, topics — as defined by the lecturer). Each file gets an opaque fileId you pass to moodle_download_file to read its contents. External URL-module links are shown as-is.",
     { courseId: z.number().describe("Course ID from moodle_list_courses") },
     async ({ courseId }) => ({
       content: [{ type: "text" as const, text: await listResources(client, courseId) }],

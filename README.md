@@ -1,498 +1,152 @@
+# stemlearn-mcp
 
+A student-focused, **read-only** MCP (Model Context Protocol) server for
+**STEMLearn** — Stellenbosch University's Moodle instance. Gives an MCP
+client (e.g. Claude Code) access to your own enrolled courses, deadlines,
+grades, and course files.
 
+> Fork of [1alexandrer/moodle-mcp](https://github.com/1alexandrer/moodle-mcp)
+> (MIT licensed — see `LICENSE`). This fork narrows scope to a single Moodle
+> site, adds a standalone browser-based SSO auth flow, fixes a few bugs found
+> during live testing against a real STEMLearn account, and adds two
+> composed/aggregate tools. See `CHANGES.md` for the full list of changes
+> from upstream.
 
+**Local only.** This project is not deployed anywhere — it runs as a local
+stdio process that your MCP client launches on your machine.
 
-# moodle-mcp
+## What it does
 
-[![npm version](https://img.shields.io/npm/v/moodle-mcp?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/moodle-mcp)
-[![npm downloads](https://img.shields.io/npm/dm/moodle-mcp?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/moodle-mcp)
-[![GitHub stars](https://img.shields.io/github/stars/1alexandrer/moodle-mcp?style=social)](https://github.com/1alexandrer/moodle-mcp)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Node](https://img.shields.io/badge/Node-18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
-[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
-[![MIT License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+Every tool call is a plain, read-only Moodle webservice request made on your
+behalf, using a token that represents *your own* student account and its
+existing permissions. It cannot do anything in Moodle that you couldn't
+already do by browsing the site yourself — see **Read-only guarantee** below.
 
-> Give Claude full access to your Moodle — courses, files, assignments, grades, quizzes, calendar, and more. Build Obsidian study vaults from your lecture notes in one command.
+## Setup
 
-> 📦 **[moodle-mcp on npm](https://www.npmjs.com/package/moodle-mcp)** — `npx moodle-mcp`
-
-**14 tools · 5 prompts · MCP Resources**
-
-
-
----
-
-## Install
-
-### Step 1 — Get your Moodle token
-
-See [Getting Your Token](#getting-your-token) below. You'll need this for any install method.
-
-### Step 2 — Pick your delivery mode
-
-**Option A — Local (zero hosting):** Runs `npx moodle-mcp` on your machine each time your MCP client starts. No server, no cost, nothing to deploy.
-
-**Option B — Hosted (Cloudflare Worker):** Deploy once, get a permanent URL. Your MCP client connects to the URL — no `npx` on the client side.
-
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/ )
-
-After deploying, set `MOODLE_URL` and `MOODLE_TOKEN` as [secrets in the CF dashboard](https://dash.cloudflare.com/) or via:
 ```bash
-npx wrangler secret put MOODLE_URL
-npx wrangler secret put MOODLE_TOKEN
-npm run deploy
-```
-Your URL will be `https://moodle-mcp.<your-subdomain>.workers.dev`.
-
-### Step 3 — Configure your MCP client
-
-<details>
-<summary><strong>Claude Desktop</strong></summary>
-
-Config file:
-- Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-**Option A — Local:**
-```json
-{
-  "mcpServers": {
-    "moodle": {
-      "command": "npx",
-      "args": ["-y", "moodle-mcp"],
-      "env": {
-        "MOODLE_URL": "https://moodle.yourschool.edu",
-        "MOODLE_TOKEN": "your_token_here"
-      }
-    }
-  }
-}
+npm install
+npx playwright install chromium   # one-time, needed for `npm run auth`
 ```
 
-**Option B — Hosted:**
-```json
-{
-  "mcpServers": {
-    "moodle": {
-      "url": "https://moodle-mcp.your-subdomain.workers.dev"
-    }
-  }
-}
-```
-</details>
+### 1. Authenticate — `npm run auth`
 
-<details>
-<summary><strong>Claude Code (CLI)</strong></summary>
-
-**Option A — Local:**
 ```bash
-claude mcp add moodle npx -- -y moodle-mcp \
-  -e MOODLE_URL=https://moodle.yourschool.edu \
-  -e MOODLE_TOKEN=your_token_here
+npm run auth
 ```
 
-**Option B — Hosted:**
+This opens a real, visible browser window and takes you through STEMLearn's
+normal sign-in: Microsoft SSO, then your Authenticator app approval — exactly
+as if you'd opened the site yourself. Nothing about your credentials or MFA
+is seen or touched by this tool.
+
+Once you're signed in, Moodle hands back a token (via the same "Mobile SSO"
+mechanism the official Moodle app uses), which is saved to `.auth/token.json`
+— gitignored, `chmod 600`, never printed in full anywhere.
+
+This is a standalone script — it does not require or involve any AI
+assistant to run. Re-run it any time your token stops working.
+
+### 2. Build
+
 ```bash
-claude mcp add moodle --transport http https://moodle-mcp.your-subdomain.workers.dev
+npm run build
 ```
-</details>
 
-<details>
-<summary><strong>Cursor</strong></summary>
+### 3. Point your MCP client at it
 
-Config file: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project)
+No environment variables or config-file secrets needed — the server reads
+`.auth/token.json` automatically.
 
-**Option A — Local:**
+**Claude Code:**
+```bash
+claude mcp add stemlearn -- node /absolute/path/to/stemlearn-mcp/dist/server.js
+```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`
+on Mac, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
 ```json
 {
   "mcpServers": {
-    "moodle": {
-      "command": "npx",
-      "args": ["-y", "moodle-mcp"],
-      "env": {
-        "MOODLE_URL": "https://moodle.yourschool.edu",
-        "MOODLE_TOKEN": "your_token_here"
-      }
+    "stemlearn": {
+      "command": "node",
+      "args": ["/absolute/path/to/stemlearn-mcp/dist/server.js"]
     }
   }
 }
 ```
 
-**Option B — Hosted:**
-```json
-{
-  "mcpServers": {
-    "moodle": {
-      "url": "https://moodle-mcp.your-subdomain.workers.dev"
-    }
-  }
-}
-```
-</details>
+Restart your MCP client after adding it.
 
-<details>
-<summary><strong>VS Code</strong></summary>
+## Available tools
 
-Config file: `.vscode/mcp.json` in your project, or `settings.json` globally.
+| Tool | What it does |
+|---|---|
+| `moodle_list_courses` | List your enrolled courses |
+| `moodle_get_course` | Full structure of one course — sections, activities |
+| `moodle_list_resources` | List downloadable files/links in a course |
+| `moodle_download_file` | Download one course file by its opaque `fileId` |
+| `moodle_list_assignments` | Assignments in a course, with due dates |
+| `moodle_get_assignment` | Your submission status + feedback for one assignment |
+| `moodle_get_grades` | Your full grade report for a course |
+| `moodle_get_calendar_events` | Upcoming deadlines/events, optionally per course |
+| `moodle_list_quizzes` | Quizzes in a course (low priority — STEMLearn courses tested so far don't use quizzes) |
+| `moodle_get_quiz_attempts` | Your attempt history for one quiz |
+| `moodle_list_forums` | Forums in a course (e.g. Announcements) |
+| `moodle_get_forum_discussions` | Recent posts in one forum |
+| `moodle_get_notifications` | Your recent Moodle notifications |
+| `moodle_get_site_info` | Site/account info + which APIs are enabled |
+| `course_overview` | **Composed.** One-call summary of a course: identity, upcoming deadlines, grade total, recent announcements |
+| `upcoming_and_overdue` | **Composed.** Every assignment with a due date across all your courses, merged into Overdue / Due soon / Upcoming, with submission + grading status already looked up |
 
-**Option A — Local:**
-```json
-{
-  "servers": {
-    "moodle": {
-      "command": "npx",
-      "args": ["-y", "moodle-mcp"],
-      "env": {
-        "MOODLE_URL": "https://moodle.yourschool.edu",
-        "MOODLE_TOKEN": "your_token_here"
-      }
-    }
-  }
-}
-```
+The composed tools exist to save an LLM from chaining several raw calls and
+re-deriving date/status logic itself each time — the merging is done
+server-side, deterministically (no heuristic/NLP task-planning).
 
-**Option B — Hosted:**
-```json
-{
-  "servers": {
-    "moodle": {
-      "url": "https://moodle-mcp.your-subdomain.workers.dev"
-    }
-  }
-}
-```
-</details>
+## Read-only guarantee
 
-<details>
-<summary><strong>Windsurf</strong></summary>
+This server only ever calls Moodle `_get_*` webservice functions — nothing
+that creates, updates, submits, posts, or deletes anything. It cannot submit
+an assignment, post to a forum, send a message, change enrolment, or modify
+grades or your profile, even though the underlying Moodle token technically
+has access to some of those functions. Verified by auditing every
+`client.call(...)` site in `src/` (see `CHANGES.md`) — grep for `client.call`
+yourself if you want to check.
 
-Config file: `~/.codeium/windsurf/mcp_config.json`
+## Token & security model
 
-**Option A — Local:**
-```json
-{
-  "mcpServers": {
-    "moodle": {
-      "command": "npx",
-      "args": ["-y", "moodle-mcp"],
-      "env": {
-        "MOODLE_URL": "https://moodle.yourschool.edu",
-        "MOODLE_TOKEN": "your_token_here"
-      }
-    }
-  }
-}
-```
+- Token lives at `.auth/token.json`, `chmod 600`, listed in `.gitignore`.
+- The server never prints the token; error messages reference it only by
+  telling you to re-run `npm run auth`.
+- File downloads use the token server-side only — it's never returned in any
+  tool output. Files are referenced by an opaque, encrypted `fileId`
+  (AES-GCM, keyed from the token) that expires after 24h and is bound to your
+  user ID.
+- If Moodle rejects the token (`invalidtoken`), the server raises a clear
+  error telling you to run `npm run auth` again — there's no separate
+  refresh-token flow to configure; Moodle webservice tokens don't have one.
+- Environment variables (`MOODLE_URL`, `MOODLE_TOKEN`, or
+  `MOODLE_USERNAME`/`MOODLE_PASSWORD`) remain supported as a secondary,
+  per-field override of the token file — useful for CI or a non-default
+  token location, not needed for normal use.
 
-**Option B — Hosted:**
-```json
-{
-  "mcpServers": {
-    "moodle": {
-      "url": "https://moodle-mcp.your-subdomain.workers.dev"
-    }
-  }
-}
-```
-</details>
+## Re-authenticating
 
-<details>
-<summary><strong>Zed</strong></summary>
+Just run `npm run auth` again. It overwrites `.auth/token.json` with a fresh
+token. This is the same command whether you're authenticating for the first
+time or your token has expired/been revoked.
 
-Config file: `~/.config/zed/settings.json`
+## Development
 
-**Option A — Local:**
-```json
-{
-  "context_servers": {
-    "moodle": {
-      "command": {
-        "path": "npx",
-        "args": ["-y", "moodle-mcp"],
-        "env": {
-          "MOODLE_URL": "https://moodle.yourschool.edu",
-          "MOODLE_TOKEN": "your_token_here"
-        }
-      }
-    }
-  }
-}
+```bash
+npm test          # run the test suite (config, client, forums fix, composed tools)
+npm run build      # type-check and compile
+npm run dev        # run via the MCP inspector for interactive debugging
 ```
 
-**Option B — Hosted:**
-```json
-{
-  "context_servers": {
-    "moodle": {
-      "url": "https://moodle-mcp.your-subdomain.workers.dev"
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary><strong>Continue.dev</strong></summary>
-
-Config file: `~/.continue/config.json`
-
-**Option A — Local:**
-```json
-{
-  "mcpServers": [
-    {
-      "name": "moodle",
-      "command": "npx",
-      "args": ["-y", "moodle-mcp"],
-      "env": {
-        "MOODLE_URL": "https://moodle.yourschool.edu",
-        "MOODLE_TOKEN": "your_token_here"
-      }
-    }
-  ]
-}
-```
-
-**Option B — Hosted:**
-```json
-{
-  "mcpServers": [
-    {
-      "name": "moodle",
-      "url": "https://moodle-mcp.your-subdomain.workers.dev"
-    }
-  ]
-}
-```
-</details>
-
-<details>
-<summary><strong>Cline</strong></summary>
-
-Open the Cline sidebar in VS Code → MCP Servers → Add Server → paste the JSON:
-
-**Option A — Local:**
-```json
-{
-  "moodle": {
-    "command": "npx",
-    "args": ["-y", "moodle-mcp"],
-    "env": {
-      "MOODLE_URL": "https://moodle.yourschool.edu",
-      "MOODLE_TOKEN": "your_token_here"
-    }
-  }
-}
-```
-
-**Option B — Hosted:**
-```json
-{
-  "moodle": {
-    "url": "https://moodle-mcp.your-subdomain.workers.dev"
-  }
-}
-```
-</details>
-
-<details>
-<summary><strong>ChatGPT — Coming soon</strong></summary>
-
-OpenAI has announced MCP support for ChatGPT. Check the [OpenAI blog](https://openai.com/blog) for the release date. Once available, the hosted URL option (Option B) will work directly.
-</details>
-
----
-
-## Getting Your Token
-
-### Option A — Moodle profile page (works everywhere)
-
-1. Log in to your school's Moodle in a browser
-2. Go to **Profile → Security keys** (URL: `https://moodle.yourschool.edu/user/managetoken.php`)
-3. Find the **Moodle mobile web service** token and copy it
-4. Set `MOODLE_TOKEN=<token>` in your MCP config
-
-### Option B — Get the token from 
-`https://moodle.yourschool.edu/login/token.php?username=<YOURUSERNAME>&password=<YOURPASSWORD>&service=moodle_mobile_app`
-### Option C — Username + password (not SSO schools)
-
-If your school uses a regular username/password (not Microsoft/Google/SSO), you can skip the token step entirely:
-
-```json
-"env": {
-  "MOODLE_URL": "https://moodle.yourschool.edu",
-  "MOODLE_USERNAME": "your_username",
-  "MOODLE_PASSWORD": "your_password"
-}
-```
-
-> ⚠️ **SSO schools**: If your school login page redirects to Microsoft, Google, or another identity provider, Option B won't work. Use Option A or C.
-
-### Option D — Extract from Moodle mobile app (SSO schools)
-
-1. Install the **Moodle app** on your phone and log in with SSO
-2. Go to **App settings → About**
-3. Tap the version number 5 times to enable developer mode
-4. Go to **Developer options → Copy token** and copy it
-5. Use that token as `MOODLE_TOKEN` in Option A
-
----
-
-## Tools
-
-| Tool | Description | Params |
-|------|-------------|--------|
-| `moodle_get_site_info` | School name, Moodle version, which APIs are enabled | — |
-| `moodle_list_courses` | All your enrolled courses | — |
-| `moodle_get_course` | Sections and all activities in a course | `courseId` |
-| `moodle_list_resources` | Files and links grouped by section — returns opaque `fileId`s | `courseId` |
-| `moodle_download_file` | Read a file by its `fileId` — returns text for text/JSON/XML, base64 for PDFs/DOCX/images | `fileId` |
-| `moodle_list_assignments` | Assignments with due dates, grouped by section | `courseId` |
-| `moodle_get_assignment` | Submission status and grade feedback | `assignmentId` |
-| `moodle_get_grades` | Full grade report with categories and feedback | `courseId` |
-| `moodle_get_calendar_events` | Upcoming events across courses | `courseId?`, `daysAhead?` |
-| `moodle_list_quizzes` | Quizzes with time limits and open dates | `courseId` |
-| `moodle_get_quiz_attempts` | Your past attempt grades and states | `quizId` |
-| `moodle_list_forums` | Forum activities in a course | `courseId` |
-| `moodle_get_forum_discussions` | Recent discussions in a forum | `forumId` |
-| `moodle_get_notifications` | Recent notifications (grades, feedback, replies) | `limit?` |
-
----
-
-## Prompts
-
-Use these in any MCP client that supports prompts (Claude Desktop, VS Code with Copilot, etc.):
-
-| Prompt | Use case | Example |
-|--------|----------|---------|
-| `summarize-course` | Full course overview organized by section | `/summarize-course courseId=42` |
-| `whats-due` | Prioritized due dates this week / next week | `/whats-due` or `/whats-due courseId=42` |
-| `build-study-notes` | Build a linked Obsidian vault from course materials | `/build-study-notes courseId=42 vaultPath=~/obsidian/finals` |
-| `exam-prep` | Topic-by-topic study guide based on grades and quiz results | `/exam-prep courseId=42` |
-| `search-notes` | Natural language search across all course files | `/search-notes courseId=42 query="derivatives and limits"` |
-
----
-
-## Obsidian Finals Prep
-
-> Turn your entire semester into a linked knowledge graph in one command.
-
-### Setup
-
-1. **Install [Obsidian](https://obsidian.md)** (free, works on Mac/Windows/Linux)
-2. Create a new vault, e.g. `~/obsidian/finals`
-3. Make sure `moodle-mcp` is connected to your MCP client
-
-### Build the vault
-
-Use the `/build-study-notes` prompt in Claude Desktop:
-
-```
-/build-study-notes courseId=42 vaultPath=~/obsidian/finals
-```
-
-Or paste this directly into Claude:
-
-```
-Pull my [Course Name] (course ID 42), read all the lecture notes and slides,
-and build a linked Obsidian vault at ~/obsidian/finals — one note per topic,
-with [[wikilinks]] between related concepts, a MOC.md index, and tags for each section.
-```
-
-Claude will:
-1. Pull all your course sections, files, assignments, and grades
-2. Read each PDF and document directly via the MCP resources protocol
-3. Write one `.md` file per section with key concepts, definitions, and examples
-4. Add `[[wikilinks]]` between related terms across notes
-5. Create a `MOC.md` (Map of Content) index linking everything
-
-### See the graph
-
-**Option A — Obsidian Graph View** (built-in, free)
-
-1. Open the vault in Obsidian
-2. Click **Graph View** (sidebar icon or `Cmd+G`)
-3. Your entire course appears as a knowledge graph — linked concepts cluster together, isolated topics stand out as things to review
-
-**Option B — Graphify** (richer visual graph)
-
-1. Install [Graphify](https://graphify.app) — it reads the same `.md` files Obsidian writes
-2. Point it at your vault folder (`~/obsidian/finals`)
-3. Drag to explore connections; click any node to open the note and ask Claude about it
-
-Both tools read the same Markdown vault — you can use both.
-
-### Knowledge Graph preview
-
-
-<img width="1565" height="947" alt="image" src="https://github.com/user-attachments/assets/382cf5ed-4806-4d3a-bfdc-6e4eeb15c3ec" />
-*Your entire course as a linked knowledge graph — built in one command. Run `/build-study-notes` once to generate this.*
-
-### Query the graph with Claude
-
-Once the vault exists on disk, you can ask Claude Code or Claude Desktop questions like:
-
-```
-Explain the relationship between [[topic A]] and [[topic B]] in my course notes at ~/obsidian/finals
-```
-
-```
-Based on my notes in ~/obsidian/finals, which topics do I need to review most before the exam?
-```
-
-Claude reads your `.md` files directly and reasons across the full linked graph.
-
-### Natural language search
-
-Once the vault is built, you can ask Claude to find specific content:
-
-```
-/search-notes courseId=42 query="the central limit theorem and when to use it"
-```
-
-Claude will look through all your course materials, find the relevant files, read them, and synthesize a direct answer.
-
----
-
-## Compatibility
-
-Some tools require your Moodle admin to enable specific web services. Run `moodle_get_site_info` to see which tools are available on your school's Moodle.
-
-| Tool | Required | Notes |
-|------|----------|-------|
-| `moodle_list_courses`, `moodle_get_course`, `moodle_list_resources`, `moodle_download_file` | Always available | Core Moodle WS |
-| `moodle_list_assignments`, `moodle_get_assignment` | Admin must enable | `mod_assign` service |
-| `moodle_get_grades` | Admin must enable | `gradereport_user` service |
-| `moodle_get_calendar_events` | Usually available | `core_calendar` service |
-| `moodle_list_quizzes`, `moodle_get_quiz_attempts` | Admin may need to enable | `mod_quiz` service |
-| `moodle_get_forum_discussions` | Admin may need to enable | `mod_forum` service |
-| `moodle_get_notifications` | Admin may need to enable | `message_popup` service |
-
-If a tool isn't available, it returns a helpful message explaining what your admin needs to enable — it won't crash the server.
-
-
----
-
-## Security & file access (v0.2)
-
-Tool responses never contain raw or authenticated Moodle file URLs. Instead, `moodle_list_resources` returns opaque `fileId`s — AES-GCM-sealed envelopes bound to your Moodle account via the access token. Pass a `fileId` to `moodle_download_file`, and the server:
-
-1. Decrypts the `fileId` and checks it was issued to you (not another user).
-2. Re-checks with Moodle that the file is still visible to you (catches unenrolment, hidden modules, removed files).
-3. Refuses anything that isn't a `pluginfile.php` URL on your Moodle host (no SSRF relay).
-4. Fetches the file server-side with the token attached to the outbound request only — the token never appears in anything returned to the MCP client.
-5. Returns text for text/JSON/XML MIMEs, or the bytes as an MCP embedded resource (base64) for PDFs/DOCX/images.
-
-This fixes the "domain not in the list of allowed fetch" error seen with Claude.ai's beta connectors when a chat tried to open a Moodle-hosted PDF: Claude no longer has to fetch anything cross-origin, because the content arrives inside the MCP response.
-
-**Limits:** 25 MB per file by default (override with `MOODLE_MCP_MAX_FILE_MB=<positive number>`). File IDs expire after 24 hours. Rotating your Moodle token invalidates all outstanding IDs.
-
-
-
----
-
-## Contributing
-
-Issues and PRs welcome. Open an issue first for large changes.
-
-MIT License — © 2026 Alexandre Ribeiro
+## Scope note
+
+This is deliberately narrow: one student's read access to one Moodle site.
+It is not a general-purpose Moodle admin/teacher tool, and it is not
+deployed anywhere (no Cloudflare Worker, no public endpoint) — everything
+runs locally under your own STEMLearn login.

@@ -10,6 +10,7 @@ import { registerQuizTools } from "./tools/quizzes.js";
 import { registerForumTools } from "./tools/forums.js";
 import { registerNotificationTools } from "./tools/notifications.js";
 import { registerSiteInfoTool } from "./tools/siteinfo.js";
+import { registerComposedTools } from "./tools/composed.js";
 
 export function registerAllTools(server: McpServer, client: MoodleClient): void {
   registerCourseTools(server, client);
@@ -22,4 +23,5 @@ export function registerAllTools(server: McpServer, client: MoodleClient): void 
   registerForumTools(server, client);
   registerNotificationTools(server, client);
   registerSiteInfoTool(server, client);
+  registerComposedTools(server, client);
 }

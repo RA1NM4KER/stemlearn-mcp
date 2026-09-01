@@ -94,7 +94,7 @@ describe("MoodleClient.call", () => {
       errorcode: "invalidtoken",
       message: "Invalid token",
     }));
-    await expect(client.call("any_function")).rejects.toThrow("Invalid Moodle token");
+    await expect(client.call("any_function")).rejects.toThrow(/npm run auth/);
   });
 
   it("returns typed response on success", async () => {
@@ -102,6 +102,24 @@ describe("MoodleClient.call", () => {
     mockFetch.mockResolvedValueOnce(mockOkJson([{ id: 1, fullname: "Math 101" }]));
     const result = await client.call<{ id: number; fullname: string }[]>("core_enrol_get_users_courses", { userid: 1 });
     expect(result[0].fullname).toBe("Math 101");
+  });
+
+  // Regression test: Moodle's PARAM_BOOL rejects JS's "true"/"false" string
+  // serialization with invalidparameter. Confirmed against a real Moodle
+  // server (message_popup_get_popup_notifications) — see docs/findings.md
+  // "Finding 7" in the research repo for the raw before/after evidence.
+  it("serializes boolean params as Moodle-compatible \"1\"/\"0\", not \"true\"/\"false\"", async () => {
+    const client = await makeClient();
+    mockFetch.mockResolvedValueOnce(mockOkJson({ notifications: [] }));
+    await client.call("message_popup_get_popup_notifications", {
+      useridto: 1,
+      newestfirst: true,
+      includepreviews: false,
+    });
+    const body = mockFetch.mock.calls.at(-1)?.[1]?.body as URLSearchParams;
+    expect(body.get("newestfirst")).toBe("1");
+    expect(body.get("includepreviews")).toBe("0");
+    expect(body.get("newestfirst")).not.toBe("true");
   });
 });
 

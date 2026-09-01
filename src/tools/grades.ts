@@ -87,7 +87,7 @@ export async function getGrades(client: MoodleClient, courseId: number): Promise
 export function registerGradeTools(server: McpServer, client: MoodleClient): void {
   server.tool(
     "moodle_get_grades",
-    "Get your full grade report for a course — all graded items, categories, percentages, and feedback.",
+    "Get the student's own grades for a course — every graded item (assignments, tests, quizzes), category, percentage, and feedback comment, plus the course total. Answers 'what's my grade in this course' or 'how did I do on X'.",
     { courseId: z.number().describe("Course ID from moodle_list_courses") },
     async ({ courseId }) => ({
       content: [{ type: "text" as const, text: await getGrades(client, courseId) }],

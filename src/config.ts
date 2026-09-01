@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 export interface Config {
   baseUrl: string;
   token?: string;
@@ -5,6 +9,40 @@ export interface Config {
   password?: string;
   /** Per-file download cap in bytes. Default 25 MB. */
   maxFileBytes: number;
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// src/config.ts (dev, tsx) -> repo root is one level up.
+// dist/config.js (built) -> repo root is also one level up.
+const REPO_ROOT = path.resolve(__dirname, "..");
+const DEFAULT_TOKEN_FILE = path.join(REPO_ROOT, ".auth", "token.json");
+
+interface TokenFile {
+  site: string;
+  token: string;
+}
+
+/**
+ * Load the token minted by `npm run auth` (scripts/auth.mjs), if present.
+ * This is the primary, zero-config auth path — no token ever needs to be
+ * pasted into an MCP client config. Returns null if the file doesn't exist
+ * or is malformed; callers fall back to env vars.
+ *
+ * Path defaults to .auth/token.json at the repo root; override with
+ * MOODLE_MCP_TOKEN_FILE (also how tests isolate from a real token file).
+ */
+export function loadTokenFile(): TokenFile | null {
+  const tokenFilePath = process.env.MOODLE_MCP_TOKEN_FILE ?? DEFAULT_TOKEN_FILE;
+  try {
+    const raw = fs.readFileSync(tokenFilePath, "utf8");
+    const data = JSON.parse(raw);
+    if (typeof data.site === "string" && typeof data.token === "string") {
+      return { site: data.site, token: data.token };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export const DEFAULT_MAX_FILE_MB = 25;
@@ -30,17 +68,28 @@ export function normalizeUrl(raw: string): string {
 }
 
 export function getConfig(): Config {
-  const rawUrl = process.env.MOODLE_URL;
-  if (!rawUrl) throw new Error("MOODLE_URL environment variable is required");
+  // Primary path: token minted by `npm run auth`, stored at .auth/token.json.
+  // Env vars remain a secondary/compatibility option and take precedence
+  // per-field when explicitly set (e.g. for CI, or a non-default token location).
+  const tokenFile = loadTokenFile();
+
+  const rawUrl = process.env.MOODLE_URL ?? tokenFile?.site;
+  if (!rawUrl) {
+    throw new Error(
+      "No Moodle URL configured. Run `npm run auth` to authenticate, or set MOODLE_URL " +
+        "(and MOODLE_TOKEN, or MOODLE_USERNAME/MOODLE_PASSWORD) as environment variables."
+    );
+  }
 
   const baseUrl = normalizeUrl(rawUrl);
-  const token = process.env.MOODLE_TOKEN;
+  const token = process.env.MOODLE_TOKEN ?? tokenFile?.token;
   const username = process.env.MOODLE_USERNAME;
   const password = process.env.MOODLE_PASSWORD;
 
   if (!token && (!username || !password)) {
     throw new Error(
-      "Set either MOODLE_TOKEN or both MOODLE_USERNAME and MOODLE_PASSWORD"
+      "No Moodle credentials found. Run `npm run auth` to authenticate (recommended), " +
+        "or set MOODLE_TOKEN, or both MOODLE_USERNAME and MOODLE_PASSWORD."
     );
   }
 

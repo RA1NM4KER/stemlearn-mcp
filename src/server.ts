@@ -1,51 +1,46 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { getConfig } from "./config.js";
+import { getConfig, loadTokenFile } from "./config.js";
 import { MoodleClient } from "./moodle-client.js";
 import { registerAllTools } from "./register-tools.js";
 import { registerResources } from "./resources/index.js";
 import { registerPrompts } from "./prompts/index.js";
 
-if (process.stdin.isTTY && !process.env.MOODLE_URL) {
+const isConfigured = Boolean(process.env.MOODLE_URL || loadTokenFile());
+
+if (process.stdin.isTTY && !isConfigured) {
   console.log(`
-moodle-mcp v0.2.0 — Moodle MCP Server
+stemlearn-mcp v0.1.0 — STEMLearn (Moodle) MCP Server
 
-This tool runs as a background server for Claude — you don't run it directly.
-Add it to your Claude config and restart Claude.
+This tool runs as a background server for an MCP client (e.g. Claude Code) —
+you don't run it directly by hand.
 
-━━━ Claude Desktop ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Config file:
+━━━ First: authenticate ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  npm run auth
+
+Opens a browser for STEMLearn SSO + Microsoft Authenticator sign-in, then
+saves a token to .auth/token.json. No credentials are pasted anywhere.
+
+━━━ Then: point your MCP client at this server ━━━━━━━━━━━━━━━━━━━
+No env vars needed — the server reads .auth/token.json automatically.
+
+Claude Code:
+  claude mcp add stemlearn -- node ${process.cwd()}/dist/server.js
+
+Claude Desktop config file:
   Mac:     ~/Library/Application Support/Claude/claude_desktop_config.json
   Windows: %APPDATA%\\Claude\\claude_desktop_config.json
 
-Paste this into the JSON:
   "mcpServers": {
-    "moodle": {
-      "command": "npx",
-      "args": ["-y", "moodle-mcp"],
-      "env": {
-        "MOODLE_URL": "https://moodle.yourschool.edu",
-        "MOODLE_TOKEN": "your_token_here"
-      }
+    "stemlearn": {
+      "command": "node",
+      "args": ["${process.cwd()}/dist/server.js"]
     }
   }
 
-━━━ Claude Code (CLI) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Run once in your project folder:
-  claude mcp add moodle npx -- -y moodle-mcp \\
-    -e MOODLE_URL=https://moodle.yourschool.edu \\
-    -e MOODLE_TOKEN=your_token_here
-
-━━━ Get your Moodle token ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Log in to your school's Moodle in a browser
-2. Go to: https://moodle.yourschool.edu/user/managetoken.php
-3. Copy the "Moodle mobile web service" token
-
-SSO school (Microsoft/Google login)? Use the Moodle mobile app:
-  App settings → About → tap version 5× → Developer options → Copy token
-
-Full guide: https://github.com/1alexandrer/moodle-mcp#getting-your-token
+(Env vars MOODLE_URL / MOODLE_TOKEN / MOODLE_USERNAME+MOODLE_PASSWORD still
+work as a secondary option and override the token file per-field.)
 `);
   process.exit(0);
 }
@@ -55,8 +50,8 @@ async function main() {
   const client = await MoodleClient.create(config);
 
   const server = new McpServer({
-    name: "moodle-mcp",
-    version: "0.2.0",
+    name: "stemlearn-mcp",
+    version: "0.1.0",
   });
 
   registerAllTools(server, client);
