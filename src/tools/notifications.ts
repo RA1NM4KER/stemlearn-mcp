@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
+import { stripHtml } from "../text.js";
 
 interface Notification {
   id: number;
@@ -22,10 +23,6 @@ function formatDate(ts: number): string {
     dateStyle: "medium",
     timeStyle: "short",
   });
-}
-
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
 }
 
 export async function getNotifications(client: MoodleClient, limit = 20): Promise<string> {

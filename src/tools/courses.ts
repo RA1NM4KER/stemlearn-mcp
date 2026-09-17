@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
+import { stripHtml } from "../text.js";
 
 interface Course {
   id: number;
@@ -44,8 +45,10 @@ export async function getCourse(client: MoodleClient, courseId: number): Promise
   if (sections.length === 0) return "This course has no content.";
   const lines: string[] = [];
   for (const section of sections) {
-    if (section.modules.length === 0) continue;
+    const summary = section.summary ? stripHtml(section.summary) : "";
+    if (section.modules.length === 0 && !summary) continue;
     lines.push(`### ${section.name || "General"}`);
+    if (summary) lines.push(summary, "");
     for (const mod of section.modules) {
       const link = mod.url ? ` — [open](${mod.url})` : "";
       lines.push(`- \`${mod.modname}\` **${mod.name}**${link}`);
