@@ -109,4 +109,29 @@ describe("getForumDiscussions (formatted output)", () => {
     expect(text).toContain("Jane Lecturer");
     expect(text).not.toContain("undefined");
   });
+
+  it("renders the post body, stripped of HTML", async () => {
+    const client = await makeClient(["mod_forum_get_forum_discussions"]);
+    mockFetch.mockResolvedValueOnce(
+      mockOkJson({
+        discussions: [
+          {
+            id: 1,
+            discussion: 1,
+            name: "Week 08",
+            userfullname: "Nick Hale",
+            numreplies: 0,
+            timemodified: 1788159040,
+            pinned: false,
+            message: "<p>The tut test will cover <strong>Lectures 01 and 02</strong>.</p>",
+          },
+        ],
+      }),
+    );
+
+    const text = await getForumDiscussions(client, 4445);
+    expect(text).toContain("The tut test will cover Lectures 01 and 02.");
+    expect(text).not.toContain("<p>");
+    expect(text).not.toContain("<strong>");
+  });
 });

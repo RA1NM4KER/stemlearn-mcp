@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
+import { stripHtml } from "../text.js";
 
 // Moodle's `mod_forum_get_forum_discussions` wsfunction needs the forum
 // *instance* id (`forum.id`, the row in mdl_forum) — NOT the course-module
@@ -27,6 +28,7 @@ interface Discussion {
   numreplies: number;
   timemodified: number;
   pinned: boolean;
+  message?: string;
 }
 
 interface DiscussionsResponse {
@@ -94,6 +96,8 @@ export async function getForumDiscussions(client: MoodleClient, forumId: number)
     const pinned = d.pinned ? " 📌" : "";
     lines.push(`- **${d.name}**${pinned}`);
     lines.push(`  By ${d.userfullname} | ${d.numreplies} replies | Last activity: ${formatDate(d.timemodified)}`);
+    const body = d.message ? stripHtml(d.message) : "";
+    if (body) lines.push(`  ${body}`);
   }
 
   return lines.join("\n");
@@ -111,7 +115,7 @@ export function registerForumTools(server: McpServer, client: MoodleClient): voi
 
   server.tool(
     "moodle_get_forum_discussions",
-    "Read recent posts in a course forum — most useful for a course's Announcements forum, to see what the lecturer has posted (title, author, reply count, last activity).",
+    "Read recent posts in a course forum — most useful for a course's Announcements forum, to see what the lecturer has posted (title, author, reply count, last activity, and the post body).",
     { forumId: z.number().describe("Forum ID from moodle_list_forums (the real forum id, not a course-module id)") },
     async ({ forumId }) => ({
       content: [{ type: "text" as const, text: await getForumDiscussions(client, forumId) }],
