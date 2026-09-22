@@ -49,7 +49,7 @@ export async function getNotifications(client: MoodleClient, limit = 20): Promis
 
   for (const n of notifications) {
     const status = n.read ? "" : " 🔵";
-    const preview = stripHtml(n.text).slice(0, 120);
+    const preview = stripHtml(n.text).slice(0, 300);
     lines.push(`- **${n.subject}**${status}`);
     lines.push(`  ${formatDate(n.timecreated)}`);
     if (preview) lines.push(`  ${preview}`);

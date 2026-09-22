@@ -20,6 +20,7 @@ interface AssignmentDetail {
   coursemodule: number;
   name: string;
   duedate: number;
+  cutoffdate: number;
   grade: number;
 }
 
@@ -165,7 +166,7 @@ interface TaskItem {
   assignmentId: number;
   dueDate: number;
   dueDateFormatted: string;
-  state: "overdue" | "due_soon" | "upcoming";
+  state: "overdue" | "due_soon" | "upcoming" | "closed";
   submissionStatus: string | null;
   gradingStatus: string | null;
 }
@@ -210,8 +211,14 @@ export async function upcomingAndOverdue(client: MoodleClient): Promise<string> 
         }
       }
 
-      const state: TaskItem["state"] =
-        assignment.duedate < now
+      // A passed cutoffdate means Moodle itself will no longer accept a
+      // submission — there's nothing left to act on, so this isn't
+      // "overdue" in the actionable sense (e.g. a Nov 2024 leftover
+      // assignment in a reused course shell showing up as urgent).
+      const isClosed = assignment.cutoffdate > 0 && assignment.cutoffdate < now;
+      const state: TaskItem["state"] = isClosed
+        ? "closed"
+        : assignment.duedate < now
           ? "overdue"
           : assignment.duedate - now < DUE_SOON_SECONDS
             ? "due_soon"
@@ -235,7 +242,7 @@ export async function upcomingAndOverdue(client: MoodleClient): Promise<string> 
   // Within a state bucket, ascending due date puts the most urgent item
   // first either way: earliest (most overdue) first for "overdue", soonest
   // first for "due_soon"/"upcoming".
-  const stateOrder = { overdue: 0, due_soon: 1, upcoming: 2 };
+  const stateOrder = { overdue: 0, due_soon: 1, upcoming: 2, closed: 3 };
   tasks.sort((a, b) => {
     if (stateOrder[a.state] !== stateOrder[b.state]) return stateOrder[a.state] - stateOrder[b.state];
     return a.dueDate - b.dueDate;
@@ -248,6 +255,7 @@ export async function upcomingAndOverdue(client: MoodleClient): Promise<string> 
     ["overdue", "🔴 Overdue"],
     ["due_soon", "🟡 Due soon (next 3 days)"],
     ["upcoming", "🟢 Upcoming"],
+    ["closed", "⚫ Closed (past cutoff — can no longer be submitted)"],
   ];
   for (const [state, heading] of groups) {
     const items = tasks.filter((t) => t.state === state);

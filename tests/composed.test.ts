@@ -150,6 +150,56 @@ describe("upcomingAndOverdue", () => {
     expect(text).toContain("graded");
   });
 
+  it("moves assignments past their cutoffdate into Closed instead of Overdue", async () => {
+    const client = await makeClient();
+    const now = Math.floor(Date.now() / 1000);
+
+    mockFetch.mockImplementation(
+      routedFetchMock({
+        core_enrol_get_users_courses: [COURSE],
+        mod_assign_get_assignments: {
+          courses: [
+            {
+              id: 2722,
+              assignments: [
+                // A leftover from a reused course shell: due and cutoff both
+                // long past — this is what showed up as a live-looking
+                // "Overdue" item in practice (a Nov 2024 assignment).
+                {
+                  id: 1,
+                  coursemodule: 1,
+                  name: "Ancient prac",
+                  duedate: now - 400 * 86400,
+                  cutoffdate: now - 399 * 86400,
+                  grade: 100,
+                },
+                // Genuinely overdue: due date passed but still submittable
+                // (no cutoff, or cutoff still ahead).
+                {
+                  id: 2,
+                  coursemodule: 2,
+                  name: "Still submittable",
+                  duedate: now - 86400,
+                  cutoffdate: 0,
+                  grade: 100,
+                },
+              ],
+            },
+          ],
+        },
+        mod_assign_get_submission_status: { lastattempt: { submission: { status: "not submitted" } } },
+      }),
+    );
+
+    const text = await upcomingAndOverdue(client);
+
+    const overdueSection = text.split("### ⚫")[0];
+    expect(overdueSection).not.toContain("Ancient prac");
+    expect(overdueSection).toContain("Still submittable");
+    expect(text).toContain("⚫ Closed");
+    expect(text).toContain("Ancient prac");
+  });
+
   it("reports no courses cleanly rather than erroring", async () => {
     const client = await makeClient();
     mockFetch.mockImplementation(routedFetchMock({ core_enrol_get_users_courses: [] }));
