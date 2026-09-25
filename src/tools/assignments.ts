@@ -26,7 +26,7 @@ export async function listAssignments(client: MoodleClient, courseId: number): P
   ]);
 
   const assignments = assignData.courses[0]?.assignments ?? [];
-  const byModule = new Map(assignments.map((a) => [a.coursemodule, a]));
+  const byModule = new Map(assignments.map((a) => [a.cmid, a]));
 
   const lines: string[] = [`## Assignments — Course ${courseId}\n`];
   let hasAny = false;

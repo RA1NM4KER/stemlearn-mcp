@@ -60,7 +60,7 @@ describe("global rendered output caps", () => {
     const total = ASSIGNMENT_LIST_POLICY.maxRendered + 20;
     const assignmentModules = nestedModules("assign", total);
     const assignments = Array.from({ length: total }, (_, index) => ({
-      id: index + 1, coursemodule: index + 1, name: `Assignment ${index + 1}`,
+      id: index + 1, cmid: index + 1, name: `Assignment ${index + 1}`,
     }));
     mockFetch.mockImplementation((_url: string, init?: RequestInit) => {
       const fn = init?.body instanceof URLSearchParams ? init.body.get("wsfunction") : undefined;

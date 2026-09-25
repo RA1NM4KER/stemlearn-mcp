@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MoodleAssignmentSchema,
   MoodleAssignmentsResponseSchema,
   MoodleCalendarResponseSchema,
   MoodleCourseContentsSchema,
@@ -64,5 +65,25 @@ describe("critical Moodle collection responses", () => {
   it("keeps legitimately optional nested assignment and notification fields tolerant", () => {
     expect(MoodleAssignmentsResponseSchema.safeParse({ courses: [{ id: 1 }] }).success).toBe(true);
     expect(MoodleNotificationsResponseSchema.safeParse({ notifications: [] }).success).toBe(true);
+  });
+});
+
+describe("Moodle assignment schema", () => {
+  it("accepts the real mod_assign_get_assignments course-module field name (cmid)", () => {
+    // Regression: mod_assign_get_assignments names the course-module id
+    // "cmid" — confirmed against a real Moodle server (4.5.8). This differs
+    // from mod_quiz_get_quizzes_by_courses, which genuinely uses
+    // "coursemodule". A schema requiring "coursemodule" here rejected every
+    // real assignment response outright, breaking moodle_list_assignments
+    // and upcoming_and_overdue against a live Moodle.
+    const result = MoodleAssignmentSchema.safeParse({
+      id: 6326, cmid: 92947, course: 2722, name: "Practical 2",
+      duedate: 1758830340, cutoffdate: 0, grade: 100,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an assignment missing cmid", () => {
+    expect(MoodleAssignmentSchema.safeParse({ id: 6326, name: "Practical 2" }).success).toBe(false);
   });
 });

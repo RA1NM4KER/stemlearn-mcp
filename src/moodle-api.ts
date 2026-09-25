@@ -75,7 +75,11 @@ export type MoodleCourseSection = z.infer<typeof MoodleCourseSectionSchema>;
 
 export const MoodleAssignmentSchema = MoodleObject.extend({
   id: z.number(),
-  coursemodule: z.number(),
+  // mod_assign_get_assignments names the course-module id "cmid" — unlike
+  // mod_quiz_get_quizzes_by_courses, which genuinely uses "coursemodule".
+  // Confirmed against a real Moodle server (4.5.8); do not rename to match
+  // MoodleQuizSchema.
+  cmid: z.number(),
   name: z.string(),
   duedate: z.number().optional().default(0),
   cutoffdate: z.number().optional().default(0),

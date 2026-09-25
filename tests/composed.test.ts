@@ -63,7 +63,7 @@ describe("courseOverview", () => {
           courses: [
             {
               id: 2722,
-              assignments: [{ id: 6326, coursemodule: 1, name: "Practical 2", duedate: now + 86400, grade: 100 }],
+              assignments: [{ id: 6326, cmid: 1, name: "Practical 2", duedate: now + 86400, grade: 100 }],
             },
           ],
         },
@@ -122,10 +122,10 @@ describe("upcomingAndOverdue", () => {
             {
               id: 2722,
               assignments: [
-                { id: 1, coursemodule: 1, name: "Very overdue", duedate: now - 10 * 86400, grade: 100 },
-                { id: 2, coursemodule: 2, name: "Slightly overdue", duedate: now - 86400, grade: 100 },
-                { id: 3, coursemodule: 3, name: "Far future", duedate: now + 30 * 86400, grade: 100 },
-                { id: 4, coursemodule: 4, name: "No due date", duedate: 0, grade: 100 },
+                { id: 1, cmid: 1, name: "Very overdue", duedate: now - 10 * 86400, grade: 100 },
+                { id: 2, cmid: 2, name: "Slightly overdue", duedate: now - 86400, grade: 100 },
+                { id: 3, cmid: 3, name: "Far future", duedate: now + 30 * 86400, grade: 100 },
+                { id: 4, cmid: 4, name: "No due date", duedate: 0, grade: 100 },
               ],
             },
           ],
@@ -156,7 +156,7 @@ describe("upcomingAndOverdue", () => {
     mockFetch.mockImplementation(routedFetchMock({
       core_enrol_get_users_courses: [COURSE],
       mod_assign_get_assignments: {
-        courses: [{ id: COURSE.id, assignments: [{ id: "bad", coursemodule: 1, name: "Broken" }] }],
+        courses: [{ id: COURSE.id, assignments: [{ id: "bad", cmid: 1, name: "Broken" }] }],
       },
     }));
 
@@ -180,7 +180,7 @@ describe("upcomingAndOverdue", () => {
                 // "Overdue" item in practice (a Nov 2024 assignment).
                 {
                   id: 1,
-                  coursemodule: 1,
+                  cmid: 1,
                   name: "Ancient prac",
                   duedate: now - 400 * 86400,
                   cutoffdate: now - 399 * 86400,
@@ -190,7 +190,7 @@ describe("upcomingAndOverdue", () => {
                 // (no cutoff, or cutoff still ahead).
                 {
                   id: 2,
-                  coursemodule: 2,
+                  cmid: 2,
                   name: "Still submittable",
                   duedate: now - 86400,
                   cutoffdate: 0,
@@ -224,7 +224,7 @@ describe("upcomingAndOverdue", () => {
     const client = await makeClient();
     const now = Math.floor(Date.now() / 1000);
     const assignments = Array.from({ length: COMPOSED_TASK_POLICY.maxRendered + 5 }, (_, i) => ({
-      id: i + 1, coursemodule: i + 1, name: `Task ${i + 1}`, duedate: now + i + 1, cutoffdate: 0, grade: 100,
+      id: i + 1, cmid: i + 1, name: `Task ${i + 1}`, duedate: now + i + 1, cutoffdate: 0, grade: 100,
     }));
     let active = 0;
     let peak = 0;
