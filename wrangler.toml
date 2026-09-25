@@ -3,5 +3,7 @@ main = "src/worker.ts"
 compatibility_date = "2025-11-01"
 compatibility_flags = ["nodejs_compat"]
 
-# This Worker entry point is retained for development only; local stdio is the
-# supported deployment model. Do not deploy a student's Moodle token remotely.
+# Private, single-user remote MCP transport (Streamable HTTP at /mcp), gated
+# by the MCP_ACCESS_TOKEN bearer secret. Local stdio remains the primary
+# supported deployment model. Secrets (MOODLE_URL, MOODLE_TOKEN,
+# MCP_ACCESS_TOKEN) are set via `wrangler secret put` — never in this file.

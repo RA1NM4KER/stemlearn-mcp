@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { normalizeUrl, getConfig, loadTokenFile } from "../src/config.js";
+import { normalizeUrl, getConfig, loadTokenFile, configFromWorkerEnv } from "../src/config.js";
 
 describe("normalizeUrl", () => {
   it("returns the origin of a base URL", () => {
@@ -145,5 +145,45 @@ describe("getConfig with .auth/token.json (npm run auth output)", () => {
     expect(loadTokenFile()).toBeNull();
     fs.writeFileSync(tmpFile, JSON.stringify({ site: 42, token: "secret-token" }));
     expect(loadTokenFile()).toBeNull();
+  });
+});
+
+describe("configFromWorkerEnv", () => {
+  it("builds a token-auth Config from Worker env bindings", () => {
+    const config = configFromWorkerEnv({
+      MOODLE_URL: "https://moodle.uni.edu",
+      MOODLE_TOKEN: "worker-token",
+    });
+    expect(config.baseUrl).toBe("https://moodle.uni.edu");
+    expect(config.auth).toEqual({ kind: "token", token: "worker-token" });
+    expect(config.maxFileBytes).toBe(25 * 1024 * 1024);
+    expect(config.requestTimeoutMs).toBe(20_000);
+  });
+
+  it("normalizes a full course URL from env", () => {
+    const config = configFromWorkerEnv({
+      MOODLE_URL: "https://moodle.uni.edu/course/view.php?id=5",
+      MOODLE_TOKEN: "worker-token",
+    });
+    expect(config.baseUrl).toBe("https://moodle.uni.edu");
+  });
+
+  it("applies the tunable overrides when set", () => {
+    const config = configFromWorkerEnv({
+      MOODLE_URL: "https://moodle.uni.edu",
+      MOODLE_TOKEN: "worker-token",
+      MOODLE_MCP_MAX_FILE_MB: "10",
+      MOODLE_MCP_REQUEST_TIMEOUT_MS: "5000",
+    });
+    expect(config.maxFileBytes).toBe(10 * 1024 * 1024);
+    expect(config.requestTimeoutMs).toBe(5000);
+  });
+
+  it("throws when MOODLE_URL is missing", () => {
+    expect(() => configFromWorkerEnv({ MOODLE_TOKEN: "worker-token" })).toThrow("MOODLE_URL");
+  });
+
+  it("throws when MOODLE_TOKEN is missing", () => {
+    expect(() => configFromWorkerEnv({ MOODLE_URL: "https://moodle.uni.edu" })).toThrow("MOODLE_TOKEN");
   });
 });

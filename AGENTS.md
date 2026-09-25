@@ -7,10 +7,14 @@ Guidance for coding agents (Claude Code, Codex, etc.) working in this repo.
 STEMLearn MCP is a **read-only** MCP server over a student's Moodle account.
 It never calls a Moodle write API and never exposes Moodle tokens,
 authenticated Moodle file URLs, or filesystem paths. Local **stdio is the
-supported deployment model** (`src/server.ts`). `src/worker.ts` (Cloudflare
-Worker, `wrangler.toml`) is an **experimental development transport only** —
-do not treat it as a place to host a real student token, and don't build
-features that only work there.
+primary supported deployment model** (`src/server.ts`). `src/worker.ts`
+(Cloudflare Worker, `wrangler.toml`) is a **private, single-user remote
+Streamable HTTP transport** at `/mcp`, gated by a Cloudflare-secret bearer
+token (`MCP_ACCESS_TOKEN`) — it is not yet a multi-user or OAuth-authenticated
+endpoint. Do not weaken or remove that bearer gate, do not add a mode where
+the Worker serves `/mcp` unauthenticated, and don't build multi-user
+credential storage (D1 tables, per-user OAuth, session management) into it
+without a deliberate design change.
 
 ## Architecture — preserve this direction
 

@@ -1,16 +1,18 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { normalizeUrl, parseMaxFileMb, parseRequestTimeoutMs } from "./config.js";
+import { configFromWorkerEnv } from "./config.js";
 import { MoodleClient, MoodleTimeoutError } from "./moodle-client.js";
 import { createStemLearnServer } from "./create-server.js";
 
-// Experimental development transport only. STEMLearn supports local stdio
-// for personal Moodle tokens; do not deploy this Worker as a token host.
+// Private, single-user remote transport. Gated by the MCP_ACCESS_TOKEN
+// bearer secret below — this is temporary single-user authentication, not a
+// multi-user/OAuth endpoint. See AGENTS.md before extending this file.
 
 interface Env {
   MOODLE_URL: string;
   MOODLE_TOKEN: string;
   MOODLE_MCP_MAX_FILE_MB?: string;
   MOODLE_MCP_REQUEST_TIMEOUT_MS?: string;
+  MCP_ACCESS_TOKEN: string;
 }
 
 export function workerErrorResponse(error: unknown): Response {
@@ -24,33 +26,100 @@ export function workerErrorResponse(error: unknown): Response {
   });
 }
 
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function unauthorizedResponse(): Response {
+  return jsonResponse(401, { error: "Unauthorized", code: "unauthorized" });
+}
+
+/**
+ * Mirrors the JSON-RPC 2.0 spec's standard parse-error shape (code -32700) —
+ * this is the same response WebStandardStreamableHTTPServerTransport itself
+ * returns for an unparsable POST body. Reproducing it here (for the early,
+ * pre-Moodle-client check below) is safe because it's the wire-format
+ * spec's error code, not an SDK-internal detail.
+ */
+function jsonRpcParseErrorResponse(): Response {
+  return jsonResponse(400, { jsonrpc: "2.0", error: { code: -32700, message: "Parse error: Invalid JSON" }, id: null });
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Constant-time-ish comparison: compares fixed-length digests, never the raw secret, with no early exit. */
+async function constantTimeEqual(a: string, b: string): Promise<boolean> {
+  const [digestA, digestB] = await Promise.all([sha256Hex(a), sha256Hex(b)]);
+  let diff = 0;
+  for (let i = 0; i < digestA.length; i++) {
+    diff |= digestA.charCodeAt(i) ^ digestB.charCodeAt(i);
+  }
+  return diff === 0 && digestA.length === digestB.length;
+}
+
+async function isAuthorized(request: Request, env: Env): Promise<boolean> {
+  if (!env.MCP_ACCESS_TOKEN) return false;
+  const header = request.headers.get("Authorization") ?? "";
+  const match = /^Bearer (.+)$/.exec(header);
+  if (!match) return false;
+  return constantTimeEqual(match[1]!, env.MCP_ACCESS_TOKEN);
+}
+
+async function handleMcpRequest(request: Request, env: Env): Promise<Response> {
+  // Cheap pre-check, POST only (GET/DELETE carry no JSON-RPC body in this
+  // transport): reject unparsable JSON before paying for a live Moodle
+  // round-trip. Reads a *clone* — the original request's body is left
+  // untouched, so on valid JSON the SDK below still does its own,
+  // authoritative parse. This only checks JSON syntax, never JSON-RPC
+  // message shape, so it can't diverge from or duplicate the SDK's parser.
+  if (request.method === "POST") {
+    try {
+      await request.clone().json();
+    } catch {
+      return jsonRpcParseErrorResponse();
+    }
+  }
+
+  try {
+    const client = await MoodleClient.create(configFromWorkerEnv(env));
+    const server = createStemLearnServer(client);
+    // Stateless (no sessionIdGenerator) + JSON response mode: each request is
+    // handled by a fresh transport/client, and the JSON-RPC response comes
+    // back as a normal application/json body instead of an SSE stream — this
+    // fits STEMLearn's request/response tool calls (no server-initiated
+    // notifications) and avoids keeping a Worker connection open.
+    const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
+    await server.connect(transport);
+    return await transport.handleRequest(request);
+  } catch (err: unknown) {
+    return workerErrorResponse(err);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (!env.MOODLE_URL || !env.MOODLE_TOKEN) {
-      return new Response(
-        JSON.stringify({ error: "Moodle configuration is required.", code: "configuration_required" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+    const url = new URL(request.url);
+
+    if (url.pathname === "/health") {
+      return jsonResponse(200, { status: "ok" });
     }
 
-    try {
-      const maxFileBytes = Math.floor(parseMaxFileMb(env.MOODLE_MCP_MAX_FILE_MB) * 1024 * 1024);
-      const requestTimeoutMs = parseRequestTimeoutMs(env.MOODLE_MCP_REQUEST_TIMEOUT_MS);
-      const config = {
-        baseUrl: normalizeUrl(env.MOODLE_URL),
-        maxFileBytes,
-        requestTimeoutMs,
-        auth: { kind: "token" as const, token: env.MOODLE_TOKEN },
-      };
-      const client = await MoodleClient.create(config);
-
-      const server = createStemLearnServer(client);
-
-      const transport = new WebStandardStreamableHTTPServerTransport({});
-      await server.connect(transport);
-      return transport.handleRequest(request);
-    } catch (err: unknown) {
-      return workerErrorResponse(err);
+    if (url.pathname === "/mcp") {
+      if (!(await isAuthorized(request, env))) {
+        return unauthorizedResponse();
+      }
+      if (!env.MOODLE_URL || !env.MOODLE_TOKEN) {
+        return jsonResponse(500, { error: "Moodle configuration is required.", code: "configuration_required" });
+      }
+      return handleMcpRequest(request, env);
     }
+
+    return jsonResponse(404, { error: "Not found", code: "not_found" });
   },
 };

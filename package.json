@@ -17,6 +17,7 @@
     "build": "tsc",
     "start": "npm run build && node dist/server.js",
     "dev": "npx @modelcontextprotocol/inspector node dist/server.js",
+    "deploy": "wrangler deploy",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build && npm test"

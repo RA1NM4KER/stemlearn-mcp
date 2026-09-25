@@ -24,9 +24,23 @@ Register the built server with an MCP client:
 claude mcp add stemlearn -- node /absolute/path/to/stemlearn-mcp/dist/server.js
 ```
 
-This repository supports local stdio use. `src/worker.ts` is an experimental
-development transport that shares the same MCP registration, but remote
-deployment is not supported for hosting a personal Moodle token.
+This repository supports two deployment modes, both built from the same
+`createStemLearnServer(client)` registration:
+
+- **Local (stdio)** — `src/server.ts`, using the local credential model above
+  (`.auth/token.json` or `MOODLE_URL`/`MOODLE_TOKEN` env vars). This remains
+  the primary supported mode.
+- **Remote (Cloudflare Worker, Streamable HTTP)** — `src/worker.ts`, exposing
+  `POST /mcp` and `GET /health`. This is a **private, single-user** remote
+  transport: the Worker holds one Moodle credential (via Cloudflare secrets,
+  never in git) and every request to `/mcp` requires an
+  `Authorization: Bearer <MCP_ACCESS_TOKEN>` header checked with a
+  constant-time comparison; requests without it get a generic `401`. It is
+  not a multi-user or OAuth-authenticated endpoint yet. Required secrets:
+  `MOODLE_URL`, `MOODLE_TOKEN`, `MCP_ACCESS_TOKEN` (set with
+  `wrangler secret put <NAME>`); optional non-secret tunables:
+  `MOODLE_MCP_MAX_FILE_MB`, `MOODLE_MCP_REQUEST_TIMEOUT_MS`. Deploy with
+  `npm run deploy` (`wrangler deploy`).
 
 ## MCP surface
 

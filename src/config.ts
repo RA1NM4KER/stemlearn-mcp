@@ -16,11 +16,17 @@ export type Config = ConfigBase & (
   | { auth: { kind: "password"; username: string; password: string } }
 );
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// src/config.ts (dev, tsx) -> repo root is one level up.
-// dist/config.js (built) -> repo root is also one level up.
-const REPO_ROOT = path.resolve(__dirname, "..");
-const DEFAULT_TOKEN_FILE = path.join(REPO_ROOT, ".auth", "token.json");
+// Computed lazily inside loadTokenFile() rather than at module load: Cloudflare
+// Workers' bundler leaves `import.meta.url` undefined, and this module is
+// imported (for its Workers-safe exports) by src/worker.ts too. Evaluating
+// fileURLToPath(import.meta.url) at the top level would throw there even
+// though the Worker path never calls loadTokenFile().
+function defaultTokenFilePath(): string {
+  // src/config.ts (dev, tsx) -> repo root is one level up.
+  // dist/config.js (built) -> repo root is also one level up.
+  const dirname = path.dirname(fileURLToPath(import.meta.url));
+  return path.join(path.resolve(dirname, ".."), ".auth", "token.json");
+}
 
 const TokenFileSchema = z.object({
   site: z.string(),
@@ -38,7 +44,7 @@ type TokenFile = z.infer<typeof TokenFileSchema>;
  * MOODLE_MCP_TOKEN_FILE (also how tests isolate from a real token file).
  */
 export function loadTokenFile(): TokenFile | null {
-  const tokenFilePath = process.env.MOODLE_MCP_TOKEN_FILE ?? DEFAULT_TOKEN_FILE;
+  const tokenFilePath = process.env.MOODLE_MCP_TOKEN_FILE ?? defaultTokenFilePath();
   try {
     const raw = fs.readFileSync(tokenFilePath, "utf8");
     const data: unknown = JSON.parse(raw);
@@ -84,6 +90,38 @@ export function parseRequestTimeoutMs(raw: string | undefined): number {
     throw new Error("MOODLE_MCP_REQUEST_TIMEOUT_MS must be an integer between 1000 and 120000");
   }
   return n;
+}
+
+/**
+ * Build a Config from Cloudflare Worker environment bindings (secrets/vars).
+ * Mirrors getConfig()'s field precedence but never touches the filesystem —
+ * Workers has no local disk, and secrets are supplied only through `env`.
+ * Only the pre-minted token auth kind is supported remotely (no interactive
+ * username/password login flow over HTTP).
+ */
+export function configFromWorkerEnv(env: {
+  MOODLE_URL?: string;
+  MOODLE_TOKEN?: string;
+  MOODLE_MCP_MAX_FILE_MB?: string;
+  MOODLE_MCP_REQUEST_TIMEOUT_MS?: string;
+}): Config {
+  if (!env.MOODLE_URL) {
+    throw new Error("No Moodle URL configured. Set the MOODLE_URL secret.");
+  }
+  if (!env.MOODLE_TOKEN) {
+    throw new Error("No Moodle token configured. Set the MOODLE_TOKEN secret.");
+  }
+
+  const baseUrl = normalizeUrl(env.MOODLE_URL);
+  const maxFileBytes = Math.floor(parseMaxFileMb(env.MOODLE_MCP_MAX_FILE_MB) * 1024 * 1024);
+  const requestTimeoutMs = parseRequestTimeoutMs(env.MOODLE_MCP_REQUEST_TIMEOUT_MS);
+
+  return {
+    baseUrl,
+    maxFileBytes,
+    requestTimeoutMs,
+    auth: { kind: "token", token: env.MOODLE_TOKEN },
+  };
 }
 
 export function getConfig(): Config {
