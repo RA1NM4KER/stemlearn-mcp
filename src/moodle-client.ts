@@ -1,25 +1,27 @@
 import type { Config } from "./config.js";
 import { DEFAULT_MAX_FILE_MB, DEFAULT_REQUEST_TIMEOUT_MS } from "./config.js";
 import { FileIdStore, type FileRef } from "./file-id-store.js";
-
-export interface SiteInfo {
-  userid: number;
-  username: string;
-  sitename: string;
-  fullname: string;
-  release: string;
-  functions?: { name: string; version: string }[];
-}
-
-type MoodleErrorResponse = {
-  exception: string;
-  errorcode?: string;
-  message?: string;
-};
+import { isMoodleFileContent, MoodleCourseContentsSchema, MoodleErrorResponseSchema, MoodleLoginResponseSchema, MoodleSiteInfoSchema } from "./moodle-api.js";
+import type { z } from "zod";
 
 export interface DownloadedFile {
   mime: string;
   bytes: Uint8Array;
+}
+
+export class MoodleClientError extends Error {
+  constructor(message: string, readonly code: "timeout" | "network" | "authentication" | "api") {
+    super(message);
+    this.name = "MoodleClientError";
+  }
+}
+
+export class MoodleTimeoutError extends MoodleClientError {
+  constructor() { super("Moodle request timed out. Please try again.", "timeout"); this.name = "MoodleTimeoutError"; }
+}
+
+export class MoodleValidationError extends MoodleClientError {
+  constructor() { super("Moodle returned an unexpected response. Please try again.", "api"); this.name = "MoodleValidationError"; }
 }
 
 export class MoodleClient {
@@ -52,11 +54,11 @@ export class MoodleClient {
   }
 
   static async create(config: Config): Promise<MoodleClient> {
-    const token =
-      config.token ??
-      (await MoodleClient.login(config.baseUrl, config.username!, config.password!, config.requestTimeoutMs));
+    const token = config.auth.kind === "token"
+      ? config.auth.token
+      : await MoodleClient.login(config.baseUrl, config.auth.username, config.auth.password, config.requestTimeoutMs);
     const client = new MoodleClient(config.baseUrl, token, config.maxFileBytes, config.requestTimeoutMs);
-    const info = await client.call<SiteInfo>("core_webservice_get_site_info");
+    const info = await client.call("core_webservice_get_site_info", {}, MoodleSiteInfoSchema);
     client.userId = info.userid;
     client.siteName = info.sitename;
     client.release = info.release ?? "";
@@ -71,9 +73,9 @@ export class MoodleClient {
       return await fetch(url, { ...init, signal: controller.signal });
     } catch (error) {
       if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-        throw new Error("Moodle request timed out. Please try again.");
+        throw new MoodleTimeoutError();
       }
-      throw new Error("Unable to reach Moodle. Please try again.");
+      throw new MoodleClientError("Unable to reach Moodle. Please try again.", "network");
     } finally {
       clearTimeout(timer);
     }
@@ -86,23 +88,27 @@ export class MoodleClient {
     const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
     let res: Response;
     try { res = await fetch(url, { method: "POST", body, signal: controller.signal }); }
-    catch { throw new Error("Moodle login request timed out or could not reach Moodle."); }
+    catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) throw new MoodleTimeoutError();
+      throw new MoodleClientError("Unable to reach Moodle. Please try again.", "network");
+    }
     finally { clearTimeout(timer); }
     const text = await res.text();
-    let data: { token?: string; error?: string };
+    let decoded: unknown;
     try {
-      data = JSON.parse(text);
+      decoded = JSON.parse(text);
     } catch {
       throw new Error(
-        "Moodle login returned an unexpected response — your school likely uses SSO (Microsoft/Google/CAS). " +
-        "Use a token instead: log in via browser, then visit " +
-        `${baseUrl}/login/token.php?service=moodle_mobile_app and set MOODLE_TOKEN.`
+        "Moodle login returned an unexpected response. Your school may require SSO; use `npm run auth` or a Moodle token instead."
       );
     }
+    const parsed = MoodleLoginResponseSchema.safeParse(decoded);
+    if (!parsed.success) {
+      throw new Error("Moodle login returned an unexpected response. Use `npm run auth` or a Moodle token instead.");
+    }
+    const data = parsed.data;
     if (data.error) {
-      throw new Error(
-        `Moodle login failed: ${data.error}. Check your username, password, and Moodle URL.`
-      );
+      throw new MoodleClientError("Moodle login failed. Check your credentials and Moodle URL.", "authentication");
     }
     if (!data.token) {
       throw new Error(
@@ -112,7 +118,11 @@ export class MoodleClient {
     return data.token;
   }
 
-  async call<T>(wsfunction: string, params: Record<string, string | number | boolean> = {}): Promise<T> {
+  async call<TSchema extends z.ZodTypeAny>(
+    wsfunction: string,
+    params: Record<string, string | number | boolean> = {},
+    schema: TSchema,
+  ): Promise<z.output<TSchema>> {
     const url = `${this.baseUrl}/webservice/rest/server.php`;
     const body = new URLSearchParams({
       wstoken: this.token,
@@ -131,21 +141,27 @@ export class MoodleClient {
     });
     const res = await this.fetch(url, { method: "POST", body });
     if (!res.ok) throw new Error("Moodle API request failed. Please try again.");
-    const data = (await res.json()) as T & Partial<MoodleErrorResponse>;
-    if (data.exception) {
-      if (data.errorcode === "webservicesnotenabled") {
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      throw new MoodleValidationError();
+    }
+    const moodleError = MoodleErrorResponseSchema.safeParse(data);
+    if (moodleError.success) {
+      if (moodleError.data.errorcode === "webservicesnotenabled") {
         throw new Error(
           "Web services are not enabled on this Moodle server. Contact your IT department to enable them."
         );
       }
-      if (data.errorcode === "invalidtoken") {
-        throw new Error(
-          "Invalid or expired Moodle token. Run `npm run auth` to sign in again and get a fresh one."
-        );
+      if (moodleError.data.errorcode === "invalidtoken") {
+        throw new MoodleClientError("Invalid or expired Moodle token. Run `npm run auth` to sign in again and get a fresh one.", "authentication");
       }
-      throw new Error("Moodle API request was rejected. Check that you still have access.");
+      throw new MoodleClientError("Moodle API request was rejected. Check that you still have access.", "api");
     }
-    return data;
+    const parsed = schema.safeParse(data);
+    if (!parsed.success) throw new MoodleValidationError();
+    return parsed.data;
   }
 
   /**
@@ -170,12 +186,12 @@ export class MoodleClient {
     if (!ref) return null;
     try { this.assertSafeFileUrl(ref.fileurl); } catch { return null; }
     try {
-      const sections = await this.call<{ modules: { contents?: { type: string; fileurl: string }[] }[] }[]>("core_course_get_contents", { courseid: ref.courseId });
+      const sections = await this.call("core_course_get_contents", { courseid: ref.courseId }, MoodleCourseContentsSchema);
       return sections.some((section) => section.modules.some((mod) =>
-        (mod.contents ?? []).some((file) => file.type === "file" && file.fileurl === ref.fileurl),
+        (mod.contents ?? []).some((file) => isMoodleFileContent(file) && file.fileurl === ref.fileurl),
       )) ? ref : null;
     } catch (error) {
-      if (error instanceof Error && error.message === "Moodle request timed out. Please try again.") throw error;
+      if (error instanceof MoodleTimeoutError) throw error;
       return null;
     }
   }

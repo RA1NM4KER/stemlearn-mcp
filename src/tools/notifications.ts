@@ -1,22 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-import { stripHtml } from "../text.js";
-
-interface Notification {
-  id: number;
-  useridfrom: number;
-  subject: string;
-  text: string;
-  timecreated: number;
-  read: boolean;
-  fullmessageformat: number;
-}
-
-interface NotificationsResponse {
-  notifications: Notification[];
-  unreadcount: number;
-}
+import { sanitizeAndTruncateHtml, truncateText } from "../text.js";
+import { loadNotifications } from "../moodle-loaders.js";
+import { TEXT_OUTPUT_POLICY } from "../policy.js";
 
 function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleString("en-CA", {
@@ -30,17 +17,9 @@ export async function getNotifications(client: MoodleClient, limit = 20): Promis
     return "Notifications API is not enabled on your Moodle.";
   }
 
-  const data = await client.call<NotificationsResponse>(
-    "message_popup_get_popup_notifications",
-    {
-      useridto: client.userId,
-      newestfirst: true,
-      limit,
-      offset: 0,
-    }
-  );
+  const data = await loadNotifications(client, limit);
 
-  const notifications = data.notifications ?? [];
+  const notifications = data.notifications;
   if (notifications.length === 0) return "No notifications found.";
 
   const lines: string[] = [
@@ -49,14 +28,14 @@ export async function getNotifications(client: MoodleClient, limit = 20): Promis
 
   for (const n of notifications) {
     const status = n.read ? "" : " 🔵";
-    const preview = stripHtml(n.text).slice(0, 300);
-    lines.push(`- **${n.subject}**${status}`);
+    const preview = sanitizeAndTruncateHtml(n.text, TEXT_OUTPUT_POLICY.maxNotificationPreviewCharacters);
+    lines.push(`- **${truncateText(n.subject, TEXT_OUTPUT_POLICY.maxLabelCharacters)}**${status}`);
     lines.push(`  ${formatDate(n.timecreated)}`);
     if (preview) lines.push(`  ${preview}`);
     lines.push("");
   }
 
-  return lines.join("\n");
+  return truncateText(lines.join("\n"), TEXT_OUTPUT_POLICY.maxMcpResponseCharacters);
 }
 
 export function registerNotificationTools(server: McpServer, client: MoodleClient): void {

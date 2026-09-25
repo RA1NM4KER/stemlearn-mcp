@@ -11,18 +11,23 @@
 // Identical implementation runs in Node (stdio) and the Cloudflare Worker;
 // Web Crypto is available globally in both.
 
-export interface FileRef {
-  userId: number;
-  courseId: number;
-  fileurl: string;
-  mime: string;
-  filename: string;
-  filesize: number;
-}
+import { z } from "zod";
 
-interface SealedPayload extends FileRef {
-  exp: number;
-}
+const SafePositiveInteger = z.number().int().positive().refine(Number.isSafeInteger);
+const FiniteNumber = z.number().finite();
+
+export const FileRefSchema = z.object({
+  userId: SafePositiveInteger,
+  courseId: SafePositiveInteger,
+  fileurl: z.string(),
+  mime: z.string(),
+  filename: z.string(),
+  filesize: FiniteNumber,
+}).strict();
+export type FileRef = z.infer<typeof FileRefSchema>;
+
+const SealedPayloadSchema = FileRefSchema.extend({ exp: FiniteNumber }).strict();
+type SealedPayload = z.infer<typeof SealedPayloadSchema>;
 
 const KEY_INFO = "moodle-mcp:file-id:v1";
 const TTL_MS = 24 * 60 * 60 * 1000;
@@ -104,12 +109,11 @@ export class FileIdStore {
       const plaintext = new Uint8Array(
         await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct),
       );
-      const payload = JSON.parse(new TextDecoder().decode(plaintext)) as SealedPayload;
-      if (!Number.isFinite(payload.exp) || payload.exp < Date.now()) return null;
-      if (!Number.isSafeInteger(payload.userId) || payload.userId !== expectedUserId) return null;
-      if (!Number.isSafeInteger(payload.courseId) || payload.courseId <= 0 ||
-          typeof payload.fileurl !== "string" || typeof payload.mime !== "string" ||
-          typeof payload.filename !== "string" || !Number.isFinite(payload.filesize)) return null;
+      const decoded: unknown = JSON.parse(new TextDecoder().decode(plaintext));
+      const parsed = SealedPayloadSchema.safeParse(decoded);
+      if (!parsed.success) return null;
+      const payload = parsed.data;
+      if (payload.exp < Date.now() || payload.userId !== expectedUserId) return null;
       const { exp: _exp, ...ref } = payload;
       return ref;
     } catch {

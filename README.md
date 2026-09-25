@@ -24,9 +24,9 @@ Register the built server with an MCP client:
 claude mcp add stemlearn -- node /absolute/path/to/stemlearn-mcp/dist/server.js
 ```
 
-This repository supports local stdio use. The Worker source is retained for
-development, but remote deployment is not a supported way to host a personal
-Moodle token.
+This repository supports local stdio use. `src/worker.ts` is an experimental
+development transport that shares the same MCP registration, but remote
+deployment is not supported for hosting a personal Moodle token.
 
 ## MCP surface
 
@@ -50,7 +50,9 @@ Network requests time out after 20 seconds by default; set
 `MOODLE_MCP_REQUEST_TIMEOUT_MS` (1000–120000) to change it. File downloads
 default to 25 MB (`MOODLE_MCP_MAX_FILE_MB`). Listings are bounded (for
 example, 25 files by default and 100 maximum) to avoid oversized MCP
-responses.
+responses. Rendered Moodle text is also bounded per field; oversized text and
+text-file reads include a truncation notice. Binary resources over 5 MB are
+not embedded into MCP responses.
 
 The server never calls Moodle write APIs and never returns Moodle tokens,
 raw file URLs, or filesystem paths.

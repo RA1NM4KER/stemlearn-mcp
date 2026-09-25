@@ -1,10 +1,10 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { normalizeUrl, parseMaxFileMb, parseRequestTimeoutMs } from "./config.js";
-import { MoodleClient } from "./moodle-client.js";
-import { registerAllTools } from "./register-tools.js";
-import { registerResources } from "./resources/index.js";
-import { registerPrompts } from "./prompts/index.js";
+import { MoodleClient, MoodleTimeoutError } from "./moodle-client.js";
+import { createStemLearnServer } from "./create-server.js";
+
+// Experimental development transport only. STEMLearn supports local stdio
+// for personal Moodle tokens; do not deploy this Worker as a token host.
 
 interface Env {
   MOODLE_URL: string;
@@ -13,13 +13,22 @@ interface Env {
   MOODLE_MCP_REQUEST_TIMEOUT_MS?: string;
 }
 
+export function workerErrorResponse(error: unknown): Response {
+  const code = error instanceof MoodleTimeoutError ? "moodle_timeout" : "moodle_request_failed";
+  const message = error instanceof MoodleTimeoutError
+    ? "Moodle request timed out. Please try again."
+    : "Moodle request failed. Please try again.";
+  return new Response(JSON.stringify({ error: message, code }), {
+    status: 502,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (!env.MOODLE_URL || !env.MOODLE_TOKEN) {
       return new Response(
-        JSON.stringify({
-          error: "Set MOODLE_URL and MOODLE_TOKEN as secrets in your Cloudflare Worker dashboard",
-        }),
+        JSON.stringify({ error: "Moodle configuration is required.", code: "configuration_required" }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -29,29 +38,19 @@ export default {
       const requestTimeoutMs = parseRequestTimeoutMs(env.MOODLE_MCP_REQUEST_TIMEOUT_MS);
       const config = {
         baseUrl: normalizeUrl(env.MOODLE_URL),
-        token: env.MOODLE_TOKEN,
         maxFileBytes,
         requestTimeoutMs,
+        auth: { kind: "token" as const, token: env.MOODLE_TOKEN },
       };
       const client = await MoodleClient.create(config);
 
-      const server = new McpServer({ name: "stemlearn-mcp", version: "0.1.0" });
+      const server = createStemLearnServer(client);
 
-      registerAllTools(server, client);
-      registerResources(server, client);
-      registerPrompts(server);
-
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-      });
+      const transport = new WebStandardStreamableHTTPServerTransport({});
       await server.connect(transport);
       return transport.handleRequest(request);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return new Response(JSON.stringify({ error: message }), {
-        status: 502,
-        headers: { "Content-Type": "application/json" },
-      });
+      return workerErrorResponse(err);
     }
   },
 };

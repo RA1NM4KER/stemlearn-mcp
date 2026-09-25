@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { normalizeUrl, getConfig } from "../src/config.js";
+import { normalizeUrl, getConfig, loadTokenFile } from "../src/config.js";
 
 describe("normalizeUrl", () => {
   it("returns the origin of a base URL", () => {
@@ -58,7 +58,7 @@ describe("getConfig", () => {
     delete process.env.MOODLE_PASSWORD;
     const config = getConfig();
     expect(config.baseUrl).toBe("https://moodle.uni.edu");
-    expect(config.token).toBe("abc123");
+    expect(config.auth).toEqual({ kind: "token", token: "abc123" });
   });
 
   it("accepts username+password auth", () => {
@@ -67,14 +67,21 @@ describe("getConfig", () => {
     process.env.MOODLE_USERNAME = "student@uni.edu";
     process.env.MOODLE_PASSWORD = "secret";
     const config = getConfig();
-    expect(config.username).toBe("student@uni.edu");
-    expect(config.password).toBe("secret");
+    expect(config.auth).toEqual({ kind: "password", username: "student@uni.edu", password: "secret" });
   });
 
   it("throws when neither token nor credentials provided", () => {
     process.env.MOODLE_URL = "https://moodle.uni.edu";
     delete process.env.MOODLE_TOKEN;
     delete process.env.MOODLE_USERNAME;
+    delete process.env.MOODLE_PASSWORD;
+    expect(() => getConfig()).toThrow("MOODLE_TOKEN");
+  });
+
+  it("rejects incomplete username/password authentication", () => {
+    process.env.MOODLE_URL = "https://moodle.uni.edu";
+    delete process.env.MOODLE_TOKEN;
+    process.env.MOODLE_USERNAME = "student";
     delete process.env.MOODLE_PASSWORD;
     expect(() => getConfig()).toThrow("MOODLE_TOKEN");
   });
@@ -109,14 +116,14 @@ describe("getConfig with .auth/token.json (npm run auth output)", () => {
     fs.writeFileSync(tmpFile, JSON.stringify({ site: "https://moodle.uni.edu", token: "filetoken" }));
     const config = getConfig();
     expect(config.baseUrl).toBe("https://moodle.uni.edu");
-    expect(config.token).toBe("filetoken");
+    expect(config.auth).toEqual({ kind: "token", token: "filetoken" });
   });
 
   it("lets MOODLE_TOKEN override the token file's token", () => {
     fs.writeFileSync(tmpFile, JSON.stringify({ site: "https://moodle.uni.edu", token: "filetoken" }));
     process.env.MOODLE_TOKEN = "envtoken";
     const config = getConfig();
-    expect(config.token).toBe("envtoken");
+    expect(config.auth).toEqual({ kind: "token", token: "envtoken" });
   });
 
   it("throws with a `npm run auth` hint when the token file is missing and no env vars are set", () => {
@@ -126,5 +133,17 @@ describe("getConfig with .auth/token.json (npm run auth output)", () => {
   it("ignores a malformed token file and falls through to the missing-config error", () => {
     fs.writeFileSync(tmpFile, "not json");
     expect(() => getConfig()).toThrow(/npm run auth/);
+  });
+
+  it("validates token-file structure while tolerating harmless extra fields", () => {
+    fs.writeFileSync(tmpFile, JSON.stringify({ site: "https://moodle.uni.edu", token: "filetoken", issuedAt: "today" }));
+    expect(loadTokenFile()).toMatchObject({ site: "https://moodle.uni.edu", token: "filetoken" });
+  });
+
+  it("rejects missing or incorrectly typed token fields without exposing their contents", () => {
+    fs.writeFileSync(tmpFile, JSON.stringify({ site: "https://moodle.uni.edu" }));
+    expect(loadTokenFile()).toBeNull();
+    fs.writeFileSync(tmpFile, JSON.stringify({ site: 42, token: "secret-token" }));
+    expect(loadTokenFile()).toBeNull();
   });
 });

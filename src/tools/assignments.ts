@@ -1,39 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-
-interface AssignmentDetail {
-  id: number;
-  coursemodule: number;
-  name: string;
-  intro: string;
-  duedate: number;
-  allowsubmissionsfromdate: number;
-  grade: number;
-  nosubmissions: number;
-}
-
-interface AssignmentsResponse {
-  courses: { id: number; assignments: AssignmentDetail[] }[];
-}
-
-interface CourseSection {
-  id: number;
-  name: string;
-  modules: { id: number; name: string; modname: string }[];
-}
-
-interface SubmissionStatus {
-  lastattempt?: {
-    submission?: { status: string; timemodified: number };
-    graded: boolean;
-  };
-  feedback?: {
-    gradefordisplay: string;
-    gradeddate: number;
-    grade?: { grade: string };
-  };
-}
+import { loadAssignments, loadCourseContents, loadSubmissionStatus } from "../moodle-loaders.js";
+import { ASSIGNMENT_LIST_POLICY, TEXT_OUTPUT_POLICY } from "../policy.js";
+import { truncateText } from "../text.js";
 
 function formatDate(ts: number): string {
   if (!ts) return "No due date";
@@ -49,8 +19,8 @@ export async function listAssignments(client: MoodleClient, courseId: number): P
   }
 
   const [sections, assignData] = await Promise.all([
-    client.call<CourseSection[]>("core_course_get_contents", { courseid: courseId }),
-    client.call<AssignmentsResponse>("mod_assign_get_assignments", {
+    loadCourseContents(client, courseId),
+    loadAssignments(client, {
       "courseids[0]": courseId,
     }),
   ]);
@@ -60,30 +30,39 @@ export async function listAssignments(client: MoodleClient, courseId: number): P
 
   const lines: string[] = [`## Assignments — Course ${courseId}\n`];
   let hasAny = false;
+  let renderedAssignments = 0;
+  let omittedAssignments = 0;
 
-  for (const section of sections.slice(0, 100)) {
+  for (const section of sections) {
     const assignMods = section.modules.filter((m) => m.modname === "assign");
     if (assignMods.length === 0) continue;
 
-    lines.push(`### ${section.name || "General"}`);
-    hasAny = true;
-
-    for (const mod of assignMods.slice(0, 100)) {
+    const sectionLines: string[] = [];
+    for (const mod of assignMods) {
+      if (renderedAssignments >= ASSIGNMENT_LIST_POLICY.maxRendered) {
+        omittedAssignments++;
+        continue;
+      }
+      renderedAssignments++;
       const detail = byModule.get(mod.id);
       if (!detail) {
-        lines.push(`- **${mod.name}** *(details unavailable)*`);
+        sectionLines.push(`- **${truncateText(mod.name, TEXT_OUTPUT_POLICY.maxLabelCharacters)}** *(details unavailable)*`);
         continue;
       }
       const due = detail.duedate ? `Due: ${formatDate(detail.duedate)}` : "No due date";
       const maxGrade = detail.grade > 0 ? ` | Max grade: ${detail.grade}` : "";
-      lines.push(`- **${detail.name}** — ${due}${maxGrade}`);
-      lines.push(`  ID: \`${detail.id}\` (use with moodle_get_assignment)`);
+      sectionLines.push(`- **${truncateText(detail.name, TEXT_OUTPUT_POLICY.maxLabelCharacters)}** — ${due}${maxGrade}`);
+      sectionLines.push(`  ID: \`${detail.id}\` (use with moodle_get_assignment)`);
     }
-    lines.push("");
+    if (sectionLines.length > 0) {
+      lines.push(`### ${truncateText(section.name || "General", TEXT_OUTPUT_POLICY.maxLabelCharacters)}`, ...sectionLines, "");
+      hasAny = true;
+    }
   }
 
   if (!hasAny) return "No assignments found in this course.";
-  return lines.join("\n");
+  if (omittedAssignments) lines.push(`_Showing the first ${ASSIGNMENT_LIST_POLICY.maxRendered} assignments; ${omittedAssignments} additional assignments were omitted._`);
+  return truncateText(lines.join("\n"), TEXT_OUTPUT_POLICY.maxMcpResponseCharacters);
 }
 
 export async function getAssignment(client: MoodleClient, assignmentId: number): Promise<string> {
@@ -91,15 +70,13 @@ export async function getAssignment(client: MoodleClient, assignmentId: number):
     return "Assignment submission status API is not enabled on your Moodle.";
   }
 
-  const status = await client.call<SubmissionStatus>("mod_assign_get_submission_status", {
-    assignid: assignmentId,
-  });
+  const status = await loadSubmissionStatus(client, assignmentId);
 
   const lines: string[] = [`## Assignment ${assignmentId} — Submission Status\n`];
 
   const submission = status.lastattempt?.submission;
   if (submission) {
-    lines.push(`**Status:** ${submission.status}`);
+    lines.push(`**Status:** ${truncateText(submission.status, TEXT_OUTPUT_POLICY.maxLabelCharacters)}`);
     if (submission.timemodified) {
       lines.push(`**Last modified:** ${formatDate(submission.timemodified)}`);
     }
@@ -111,7 +88,7 @@ export async function getAssignment(client: MoodleClient, assignmentId: number):
   lines.push(`**Graded:** ${graded ? "Yes" : "No"}`);
 
   if (status.feedback) {
-    lines.push(`\n**Grade:** ${status.feedback.gradefordisplay}`);
+    lines.push(`\n**Grade:** ${truncateText(status.feedback.gradefordisplay ?? "—", TEXT_OUTPUT_POLICY.maxLabelCharacters)}`);
   }
 
   return lines.join("\n");

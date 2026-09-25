@@ -1,27 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-
-const TEXT_MIMES = new Set([
-  "application/json",
-  "application/xml",
-  "application/javascript",
-  "application/x-yaml",
-  "application/yaml",
-]);
-
-function isTextMime(mime: string): boolean {
-  return mime.startsWith("text/") || TEXT_MIMES.has(mime);
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let s = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    s += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as unknown as number[]);
-  }
-  return btoa(s);
-}
+import { bytesToBase64, isTextMime } from "../content.js";
+import { MoodleTimeoutError } from "../moodle-client.js";
+import { TEXT_OUTPUT_POLICY } from "../policy.js";
+import { truncateText } from "../text.js";
 
 export function registerDownloadTool(server: McpServer, client: MoodleClient): void {
   server.tool(
@@ -33,7 +16,7 @@ export function registerDownloadTool(server: McpServer, client: MoodleClient): v
     async ({ fileId }) => {
       let authorized;
       try { authorized = await client.downloadAuthorizedFile(fileId); } catch (err) {
-        const message = err instanceof Error && err.message === "Moodle request timed out. Please try again."
+        const message = err instanceof MoodleTimeoutError
           ? err.message : "File download failed. Please try again.";
         return { isError: true, content: [{ type: "text" as const, text: message }] };
       }
@@ -55,14 +38,27 @@ export function registerDownloadTool(server: McpServer, client: MoodleClient): v
       const resourceUri = `moodle://files/${fileId}`;
 
       if (isTextMime(mime)) {
-        const text = new TextDecoder("utf-8", { fatal: false }).decode(downloaded.bytes);
+        const text = truncateText(
+          new TextDecoder("utf-8", { fatal: false }).decode(downloaded.bytes),
+          TEXT_OUTPUT_POLICY.maxTextFileCharacters,
+        );
         return {
           content: [
             {
               type: "text" as const,
-              text: `**${ref.filename}** (${mime})\n\n${text}`,
+              text: `**${truncateText(ref.filename, TEXT_OUTPUT_POLICY.maxLabelCharacters)}** (${mime})\n\n${text}`,
             },
           ],
+        };
+      }
+
+      if (downloaded.bytes.length > TEXT_OUTPUT_POLICY.maxEmbeddedBinaryFileBytes) {
+        return {
+          isError: true,
+          content: [{
+            type: "text" as const,
+            text: `Binary file is too large to embed safely. The MCP binary limit is ${Math.round(TEXT_OUTPUT_POLICY.maxEmbeddedBinaryFileBytes / 1024 / 1024)} MB.`,
+          }],
         };
       }
 
@@ -70,7 +66,7 @@ export function registerDownloadTool(server: McpServer, client: MoodleClient): v
         content: [
           {
             type: "text" as const,
-            text: `**${ref.filename}** (${mime}, ${downloaded.bytes.length} bytes) — embedded below.`,
+            text: `**${truncateText(ref.filename, TEXT_OUTPUT_POLICY.maxLabelCharacters)}** (${mime}, ${downloaded.bytes.length} bytes) — embedded below.`,
           },
           {
             type: "resource" as const,

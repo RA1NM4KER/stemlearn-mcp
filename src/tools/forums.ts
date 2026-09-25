@@ -1,7 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-import { stripHtml } from "../text.js";
+import { sanitizeAndTruncateHtml, truncateText } from "../text.js";
+import { loadForumDiscussions, loadForums } from "../moodle-loaders.js";
+import type { MoodleDiscussion, MoodleForum } from "../moodle-api.js";
+import { FORUM_LIST_POLICY, TEXT_OUTPUT_POLICY } from "../policy.js";
 
 // Moodle's `mod_forum_get_forum_discussions` wsfunction needs the forum
 // *instance* id (`forum.id`, the row in mdl_forum) — NOT the course-module
@@ -11,39 +14,13 @@ import { stripHtml } from "../text.js";
 // "Unable to find forum with id <cmid>"; the real forum.id works.
 // So forum listing must come from mod_forum_get_forums_by_courses, which is
 // the only function that returns the real forum id.
-interface Forum {
-  id: number;
-  cmid: number;
-  course: number;
-  name: string;
-  type: string;
-  numdiscussions?: number;
-}
-
-interface Discussion {
-  id: number;
-  discussion: number;
-  name: string;
-  userfullname: string;
-  numreplies: number;
-  timemodified: number;
-  pinned: boolean;
-  message?: string;
-}
-
-interface DiscussionsResponse {
-  discussions: Discussion[];
-}
-
 function formatDate(ts: number): string {
   return new Date(ts * 1000).toLocaleString("en-CA", { dateStyle: "medium" });
 }
 
-export async function listForumsRaw(client: MoodleClient, courseId: number): Promise<Forum[]> {
+export async function listForumsRaw(client: MoodleClient, courseId: number): Promise<MoodleForum[]> {
   if (!client.supports("mod_forum_get_forums_by_courses")) return [];
-  return client.call<Forum[]>("mod_forum_get_forums_by_courses", {
-    "courseids[0]": courseId,
-  });
+  return loadForums(client, courseId);
 }
 
 export async function listForums(client: MoodleClient, courseId: number): Promise<string> {
@@ -55,30 +32,41 @@ export async function listForums(client: MoodleClient, courseId: number): Promis
   if (forums.length === 0) return "No forums found in this course.";
 
   const lines: string[] = [`## Forums — Course ${courseId}\n`];
-  for (const forum of forums.slice(0, 100)) {
+  for (const forum of forums.slice(0, FORUM_LIST_POLICY.maxRenderedForums)) {
     const discussionCount = forum.numdiscussions != null ? ` (${forum.numdiscussions} discussions)` : "";
-    lines.push(`- **${forum.name}**${discussionCount} — ID: \`${forum.id}\` (use with moodle_get_forum_discussions)`);
+    lines.push(`- **${truncateText(forum.name, TEXT_OUTPUT_POLICY.maxLabelCharacters)}**${discussionCount} — ID: \`${forum.id}\` (use with moodle_get_forum_discussions)`);
   }
-  return lines.join("\n");
+  if (forums.length > FORUM_LIST_POLICY.maxRenderedForums) {
+    lines.push(`\n_Showing the first ${FORUM_LIST_POLICY.maxRenderedForums} forums._`);
+  }
+  return truncateText(lines.join("\n"), TEXT_OUTPUT_POLICY.maxMcpResponseCharacters);
 }
 
 export async function getDiscussionsRaw(
   client: MoodleClient,
   forumId: number,
   perpage = 20,
-): Promise<Discussion[]> {
-  if (!client.supports("mod_forum_get_forum_discussions")) return [];
+): Promise<MoodleDiscussion[]> {
+  return (await getDiscussionPage(client, forumId, perpage)).discussions;
+}
+
+async function getDiscussionPage(
+  client: MoodleClient,
+  forumId: number,
+  perpage: number,
+): Promise<{ discussions: MoodleDiscussion[]; omitted: number }> {
+  if (!client.supports("mod_forum_get_forum_discussions")) return { discussions: [], omitted: 0 };
   // sortby/sortdirection are NOT accepted params on every Moodle version —
   // confirmed against a real server (4.5.8): either one alone triggers
   // invalidparameter, even with otherwise-plausible values ("timemodified",
   // "DESC"). Omit them and sort client-side instead, which works everywhere.
-  const data = await client.call<DiscussionsResponse>("mod_forum_get_forum_discussions", {
-    forumid: forumId,
-    page: 0,
-    perpage,
-  });
-  const discussions = (data.discussions ?? []).slice(0, Math.min(perpage, 100));
-  return [...discussions].sort((a, b) => b.timemodified - a.timemodified);
+  const data = await loadForumDiscussions(client, forumId, perpage);
+  const limit = Math.min(perpage, FORUM_LIST_POLICY.maxRenderedDiscussions);
+  const discussions = data.discussions.slice(0, limit);
+  return {
+    discussions: [...discussions].sort((a, b) => b.timemodified - a.timemodified),
+    omitted: Math.max(0, data.discussions.length - discussions.length),
+  };
 }
 
 export async function getForumDiscussions(client: MoodleClient, forumId: number): Promise<string> {
@@ -86,20 +74,22 @@ export async function getForumDiscussions(client: MoodleClient, forumId: number)
     return "Forum discussions API is not enabled on your Moodle. Ask your admin to enable mod_forum web services.";
   }
 
-  const discussions = await getDiscussionsRaw(client, forumId);
+  const { discussions, omitted } = await getDiscussionPage(client, forumId, 20);
   if (discussions.length === 0) return `No discussions found in forum ${forumId}.`;
 
   const lines: string[] = [`## Forum ${forumId} — Recent Discussions\n`];
 
   for (const d of discussions) {
     const pinned = d.pinned ? " 📌" : "";
-    lines.push(`- **${d.name}**${pinned}`);
-    lines.push(`  By ${d.userfullname} | ${d.numreplies} replies | Last activity: ${formatDate(d.timemodified)}`);
-    const body = d.message ? stripHtml(d.message) : "";
+    lines.push(`- **${truncateText(d.name, TEXT_OUTPUT_POLICY.maxLabelCharacters)}**${pinned}`);
+    lines.push(`  By ${truncateText(d.userfullname, TEXT_OUTPUT_POLICY.maxLabelCharacters)} | ${d.numreplies} replies | Last activity: ${formatDate(d.timemodified)}`);
+    const body = d.message ? sanitizeAndTruncateHtml(d.message, TEXT_OUTPUT_POLICY.maxForumPostCharacters) : "";
     if (body) lines.push(`  ${body}`);
   }
 
-  return lines.join("\n");
+  if (omitted) lines.push(`\n_Showing the first ${discussions.length} discussions; ${omitted} additional discussions were omitted._`);
+
+  return truncateText(lines.join("\n"), TEXT_OUTPUT_POLICY.maxMcpResponseCharacters);
 }
 
 export function registerForumTools(server: McpServer, client: MoodleClient): void {

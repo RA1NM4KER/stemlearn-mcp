@@ -41,15 +41,17 @@ Steps:
               ? `What's due soon in my course ${courseId}?
 
 1. Call moodle_get_calendar_events with courseId=${courseId} and daysAhead=30
-2. Call moodle_list_assignments with courseId=${courseId}
-3. Present a prioritized list: **This week** / **Next week** / **Later**
+2. Call moodle_get_course_notices with courseId=${courseId} to check current lecturer notices
+3. Call moodle_list_assignments with courseId=${courseId}
+4. Present a prioritized list: **This week** / **Next week** / **Later**
    Include assignment name, course, due date, and submission status`
               : `What's due soon across all my courses?
 
 1. Call moodle_list_courses to get all my courses
 2. Call moodle_get_calendar_events (no courseId filter) with daysAhead=14
-3. For any course with upcoming events, call moodle_list_assignments
-4. Present a prioritized list: **This week** / **Next week** / **Later**
+3. For any course with upcoming events, call moodle_get_course_notices and moodle_list_assignments with that courseId
+4. Treat a current course notice as the source to verify conflicting dates from PDFs or forum posts
+5. Present a prioritized list: **This week** / **Next week** / **Later**
    Group by course, include due date and submission status`,
           },
         },

@@ -4,6 +4,7 @@ import { FileIdStore } from "../src/file-id-store.js";
 import { registerDownloadTool } from "../src/tools/download.js";
 import { registerResources } from "../src/resources/index.js";
 import { registerPrompts } from "../src/prompts/index.js";
+import { TEXT_OUTPUT_POLICY } from "../src/policy.js";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -13,7 +14,7 @@ const response = (data: unknown) => ({ ok: true, json: async () => data, text: a
 
 async function client() {
   mockFetch.mockResolvedValueOnce(response(site));
-  return MoodleClient.create({ baseUrl: "https://moodle.test", token: "token" } as never);
+  return MoodleClient.create({ baseUrl: "https://moodle.test", auth: { kind: "token", token: "token" } });
 }
 
 function capture(client: MoodleClient) {
@@ -31,10 +32,20 @@ function capture(client: MoodleClient) {
   return { tool: tool!, resource: resource!, prompts };
 }
 
-function visibleFile() { return [{ modules: [{ contents: [{ type: "file", fileurl: fileUrl }] }] }]; }
+function visibleFile() {
+  return [{
+    id: 1,
+    modules: [{
+      id: 2,
+      name: "Notes",
+      modname: "resource",
+      contents: [{ type: "file", fileurl: fileUrl, filename: "notes.txt", filesize: 2 }],
+    }],
+  }];
+}
 
 describe("file MCP integration", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => mockFetch.mockReset());
 
   it("uses the registered opaque resource URI in the prompt workflow", async () => {
     const c = await client();
@@ -70,5 +81,35 @@ describe("file MCP integration", () => {
     const deniedId = await c.fileIdStore.seal({ userId: 1, courseId: 5, fileurl: fileUrl, mime: "text/plain", filename: "x", filesize: 1 });
     mockFetch.mockResolvedValueOnce(response([]));
     expect((await tool({ fileId: deniedId }) as { isError: boolean }).isError).toBe(true);
+  });
+
+  it("bounds text-file MCP output without changing file authorization", async () => {
+    const c = await client();
+    const id = await c.fileIdStore.seal({ userId: 1, courseId: 5, fileurl: fileUrl, mime: "text/plain", filename: "notes.txt", filesize: 2 });
+    const { tool } = capture(c);
+    const largeText = "x".repeat(TEXT_OUTPUT_POLICY.maxTextFileCharacters + 1);
+    mockFetch.mockResolvedValueOnce(response(visibleFile())).mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ "content-type": "text/plain" }),
+      arrayBuffer: async () => new TextEncoder().encode(largeText).buffer,
+    });
+
+    const result = await tool({ fileId: id }) as { content: { text: string }[] };
+    expect(result.content[0]?.text).toContain("Text truncated after");
+  });
+
+  it("refuses to embed an oversized binary file into an MCP response", async () => {
+    const c = await client();
+    const id = await c.fileIdStore.seal({ userId: 1, courseId: 5, fileurl: fileUrl, mime: "application/pdf", filename: "notes.pdf", filesize: 2 });
+    const { tool } = capture(c);
+    mockFetch.mockResolvedValueOnce(response(visibleFile())).mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ "content-type": "application/pdf" }),
+      arrayBuffer: async () => new Uint8Array(TEXT_OUTPUT_POLICY.maxEmbeddedBinaryFileBytes + 1).buffer,
+    });
+
+    const result = await tool({ fileId: id }) as { isError?: boolean; content: { text: string }[] };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("too large to embed safely");
   });
 });

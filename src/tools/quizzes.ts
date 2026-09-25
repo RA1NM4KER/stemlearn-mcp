@@ -1,41 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-
-interface QuizDetail {
-  id: number;
-  coursemodule: number;
-  name: string;
-  intro: string;
-  timelimit: number;
-  attempts: number;
-  grademethod: number;
-  timeopen: number;
-  timeclose: number;
-}
-
-interface QuizzesResponse {
-  quizzes: QuizDetail[];
-}
-
-interface CourseSection {
-  id: number;
-  name: string;
-  modules: { id: number; name: string; modname: string; url?: string }[];
-}
-
-interface QuizAttempt {
-  id: number;
-  attempt: number;
-  state: string;
-  timestart: number;
-  timefinish: number;
-  sumgrades: number | null;
-}
-
-interface AttemptsResponse {
-  attempts: QuizAttempt[];
-}
+import { QUIZ_ATTEMPT_POLICY, QUIZ_LIST_POLICY, TEXT_OUTPUT_POLICY } from "../policy.js";
+import { loadCourseContents, loadQuizAttempts, loadQuizzes } from "../moodle-loaders.js";
+import { truncateText } from "../text.js";
 
 function formatDate(ts: number): string {
   if (!ts) return "—";
@@ -54,39 +22,46 @@ export async function listQuizzes(client: MoodleClient, courseId: number): Promi
   }
 
   const [sections, quizData] = await Promise.all([
-    client.call<CourseSection[]>("core_course_get_contents", { courseid: courseId }),
-    client.call<QuizzesResponse>("mod_quiz_get_quizzes_by_courses", {
-      "courseids[0]": courseId,
-    }),
+    loadCourseContents(client, courseId),
+    loadQuizzes(client, courseId),
   ]);
 
   const byModule = new Map(quizData.quizzes.map((q) => [q.coursemodule, q]));
   const lines: string[] = [`## Quizzes — Course ${courseId}\n`];
   let hasAny = false;
+  let renderedQuizzes = 0;
+  let omittedQuizzes = 0;
 
-  for (const section of sections.slice(0, 100)) {
+  for (const section of sections) {
     const quizMods = section.modules.filter((m) => m.modname === "quiz");
     if (quizMods.length === 0) continue;
 
-    lines.push(`### ${section.name || "General"}`);
-    hasAny = true;
-
-    for (const mod of quizMods.slice(0, 100)) {
-      const q = byModule.get(mod.id);
-      if (!q) {
-        lines.push(`- **${mod.name}** *(details unavailable)*`);
+    const sectionLines: string[] = [];
+    for (const mod of quizMods) {
+      if (renderedQuizzes >= QUIZ_LIST_POLICY.maxRendered) {
+        omittedQuizzes++;
         continue;
       }
-      lines.push(`- **${q.name}**`);
-      lines.push(`  ID: \`${q.id}\` | Time limit: ${formatDuration(q.timelimit)} | Attempts: ${q.attempts === 0 ? "Unlimited" : q.attempts}`);
-      if (q.timeopen) lines.push(`  Opens: ${formatDate(q.timeopen)}`);
-      if (q.timeclose) lines.push(`  Closes: ${formatDate(q.timeclose)}`);
+      renderedQuizzes++;
+      const q = byModule.get(mod.id);
+      if (!q) {
+        sectionLines.push(`- **${truncateText(mod.name, TEXT_OUTPUT_POLICY.maxLabelCharacters)}** *(details unavailable)*`);
+        continue;
+      }
+      sectionLines.push(`- **${truncateText(q.name, TEXT_OUTPUT_POLICY.maxLabelCharacters)}**`);
+      sectionLines.push(`  ID: \`${q.id}\` | Time limit: ${formatDuration(q.timelimit)} | Attempts: ${q.attempts === 0 ? "Unlimited" : q.attempts}`);
+      if (q.timeopen) sectionLines.push(`  Opens: ${formatDate(q.timeopen)}`);
+      if (q.timeclose) sectionLines.push(`  Closes: ${formatDate(q.timeclose)}`);
     }
-    lines.push("");
+    if (sectionLines.length > 0) {
+      lines.push(`### ${truncateText(section.name || "General", TEXT_OUTPUT_POLICY.maxLabelCharacters)}`, ...sectionLines, "");
+      hasAny = true;
+    }
   }
 
   if (!hasAny) return "No quizzes found in this course.";
-  return lines.join("\n");
+  if (omittedQuizzes) lines.push(`_Showing the first ${QUIZ_LIST_POLICY.maxRendered} quizzes; ${omittedQuizzes} additional quizzes were omitted._`);
+  return truncateText(lines.join("\n"), TEXT_OUTPUT_POLICY.maxMcpResponseCharacters);
 }
 
 export async function getQuizAttempts(client: MoodleClient, quizId: number): Promise<string> {
@@ -94,11 +69,7 @@ export async function getQuizAttempts(client: MoodleClient, quizId: number): Pro
     return "Quiz attempts API is not enabled on your Moodle.";
   }
 
-  const data = await client.call<AttemptsResponse>("mod_quiz_get_user_attempts", {
-    quizid: quizId,
-    status: "all",
-    includepreviews: false,
-  });
+  const data = await loadQuizAttempts(client, quizId);
 
   const attempts = data.attempts ?? [];
   if (attempts.length === 0) return `No attempts found for quiz ${quizId}.`;
@@ -107,13 +78,17 @@ export async function getQuizAttempts(client: MoodleClient, quizId: number): Pro
   lines.push("| # | State | Started | Finished | Grade |");
   lines.push("|---|-------|---------|----------|-------|");
 
-  for (const a of attempts) {
+  for (const a of attempts.slice(0, QUIZ_ATTEMPT_POLICY.maxRendered)) {
     const finished = a.timefinish ? formatDate(a.timefinish) : "In progress";
     const grade = a.sumgrades != null ? String(a.sumgrades) : "—";
-    lines.push(`| ${a.attempt} | ${a.state} | ${formatDate(a.timestart)} | ${finished} | ${grade} |`);
+    lines.push(`| ${a.attempt} | ${truncateText(a.state, TEXT_OUTPUT_POLICY.maxLabelCharacters)} | ${formatDate(a.timestart)} | ${finished} | ${grade} |`);
   }
 
-  return lines.join("\n");
+  if (attempts.length > QUIZ_ATTEMPT_POLICY.maxRendered) {
+    lines.push(`\n_Showing the first ${QUIZ_ATTEMPT_POLICY.maxRendered} attempts._`);
+  }
+
+  return truncateText(lines.join("\n"), TEXT_OUTPUT_POLICY.maxMcpResponseCharacters);
 }
 
 export function registerQuizTools(server: McpServer, client: MoodleClient): void {

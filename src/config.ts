@@ -1,17 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
-export interface Config {
+interface ConfigBase {
   baseUrl: string;
-  token?: string;
-  username?: string;
-  password?: string;
   /** Per-file download cap in bytes. Default 25 MB. */
   maxFileBytes: number;
   /** Per-request Moodle network timeout in milliseconds. Default 20 seconds. */
   requestTimeoutMs: number;
 }
+
+export type Config = ConfigBase & (
+  | { auth: { kind: "token"; token: string } }
+  | { auth: { kind: "password"; username: string; password: string } }
+);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // src/config.ts (dev, tsx) -> repo root is one level up.
@@ -19,10 +22,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 const DEFAULT_TOKEN_FILE = path.join(REPO_ROOT, ".auth", "token.json");
 
-interface TokenFile {
-  site: string;
-  token: string;
-}
+const TokenFileSchema = z.object({
+  site: z.string(),
+  token: z.string(),
+}).passthrough();
+type TokenFile = z.infer<typeof TokenFileSchema>;
 
 /**
  * Load the token minted by `npm run auth` (scripts/auth.mjs), if present.
@@ -37,11 +41,9 @@ export function loadTokenFile(): TokenFile | null {
   const tokenFilePath = process.env.MOODLE_MCP_TOKEN_FILE ?? DEFAULT_TOKEN_FILE;
   try {
     const raw = fs.readFileSync(tokenFilePath, "utf8");
-    const data = JSON.parse(raw);
-    if (typeof data.site === "string" && typeof data.token === "string") {
-      return { site: data.site, token: data.token };
-    }
-    return null;
+    const data: unknown = JSON.parse(raw);
+    const parsed = TokenFileSchema.safeParse(data);
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
@@ -102,16 +104,29 @@ export function getConfig(): Config {
   const token = process.env.MOODLE_TOKEN ?? tokenFile?.token;
   const username = process.env.MOODLE_USERNAME;
   const password = process.env.MOODLE_PASSWORD;
+  const maxFileBytes = Math.floor(parseMaxFileMb(process.env.MOODLE_MCP_MAX_FILE_MB) * 1024 * 1024);
+  const requestTimeoutMs = parseRequestTimeoutMs(process.env.MOODLE_MCP_REQUEST_TIMEOUT_MS);
 
-  if (!token && (!username || !password)) {
+  if (token) {
+    return {
+      baseUrl,
+      maxFileBytes,
+      requestTimeoutMs,
+      auth: { kind: "token", token },
+    };
+  }
+
+  if (!username || !password) {
     throw new Error(
       "No Moodle credentials found. Run `npm run auth` to authenticate (recommended), " +
         "or set MOODLE_TOKEN, or both MOODLE_USERNAME and MOODLE_PASSWORD."
     );
   }
 
-  const maxFileBytes = Math.floor(parseMaxFileMb(process.env.MOODLE_MCP_MAX_FILE_MB) * 1024 * 1024);
-  const requestTimeoutMs = parseRequestTimeoutMs(process.env.MOODLE_MCP_REQUEST_TIMEOUT_MS);
-
-  return { baseUrl, token, username, password, maxFileBytes, requestTimeoutMs };
+  return {
+    baseUrl,
+    maxFileBytes,
+    requestTimeoutMs,
+    auth: { kind: "password", username, password },
+  };
 }

@@ -1,80 +1,30 @@
 import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-
-interface ModuleContent {
-  type: string;
-  filename: string;
-  fileurl: string;
-  filesize: number;
-  mimetype?: string;
-}
-
-interface CourseModule {
-  id: number;
-  name: string;
-  modname: string;
-  contents?: ModuleContent[];
-}
-
-interface CourseSection {
-  id: number;
-  name: string;
-  modules: CourseModule[];
-}
-
-interface Course {
-  id: number;
-  fullname: string;
-  shortname: string;
-}
-
-const TEXT_MIMES = new Set([
-  "application/json",
-  "application/xml",
-  "application/javascript",
-  "application/x-yaml",
-  "application/yaml",
-]);
-const MAX_RESOURCE_COURSES = 25;
-const MAX_RESOURCE_FILES = 100;
-
-function isTextMime(mime: string): boolean {
-  return mime.startsWith("text/") || TEXT_MIMES.has(mime);
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let s = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    s += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as unknown as number[]);
-  }
-  return btoa(s);
-}
+import { bytesToBase64, isTextMime } from "../content.js";
+import { RESOURCE_LIST_POLICY, TEXT_OUTPUT_POLICY } from "../policy.js";
+import { loadCourseContents, loadEnrolledCourses } from "../moodle-loaders.js";
+import { isMoodleFileContent } from "../moodle-api.js";
+import { truncateText } from "../text.js";
 
 export function registerResources(server: McpServer, client: MoodleClient): void {
   server.resource(
     "moodle-course-files",
     new ResourceTemplate("moodle://files/{fileId}", {
       list: async () => {
-        const courses = (await client.call<Course[]>("core_enrol_get_users_courses", {
-          userid: client.userId,
-        })).slice(0, MAX_RESOURCE_COURSES);
+        const courses = (await loadEnrolledCourses(client)).slice(0, RESOURCE_LIST_POLICY.maxCourses);
 
         const resources: { uri: string; name: string; mimeType?: string; description?: string }[] = [];
 
-        await Promise.all(
-          courses.map(async (course) => {
-            try {
-              const sections = await client.call<CourseSection[]>("core_course_get_contents", {
-                courseid: course.id,
-              });
+        for (const course of courses) {
+          try {
+              const sections = await loadCourseContents(client, course.id);
               for (const section of sections) {
                 for (const mod of section.modules) {
                   if (!["resource", "folder"].includes(mod.modname)) continue;
                   for (const file of mod.contents ?? []) {
-                    if (resources.length >= MAX_RESOURCE_FILES) return;
-                    if (file.type !== "file") continue;
+                    if (resources.length >= RESOURCE_LIST_POLICY.maxEntries) break;
+                    if (!isMoodleFileContent(file)) continue;
                     const mime = file.mimetype ?? "application/octet-stream";
                     const fileId = await client.fileIdStore.seal({
                       userId: client.userId,
@@ -86,31 +36,39 @@ export function registerResources(server: McpServer, client: MoodleClient): void
                     });
                     resources.push({
                       uri: `moodle://files/${fileId}`,
-                      name: `${course.shortname} / ${section.name || "General"} / ${file.filename}`,
+                      name: `${truncateText(course.shortname, TEXT_OUTPUT_POLICY.maxLabelCharacters)} / ${truncateText(section.name || "General", TEXT_OUTPUT_POLICY.maxLabelCharacters)} / ${truncateText(file.filename, TEXT_OUTPUT_POLICY.maxLabelCharacters)}`,
                       mimeType: mime,
-                      description: `${course.fullname} — ${section.name || "General"}`,
+                      description: `${truncateText(course.fullname, TEXT_OUTPUT_POLICY.maxLabelCharacters)} — ${truncateText(section.name || "General", TEXT_OUTPUT_POLICY.maxLabelCharacters)}`,
                     });
                   }
                 }
               }
-            } catch {
-              // Skip courses that fail (permission / API issues).
-            }
-          }),
-        );
+          } catch {
+            // Skip courses that fail (permission / API issues).
+          }
+          if (resources.length >= RESOURCE_LIST_POLICY.maxEntries) break;
+        }
 
         return { resources };
       },
     }),
     async (uri, { fileId }) => {
-      const authorized = await client.downloadAuthorizedFile(fileId as string);
+      const id = Array.isArray(fileId) ? fileId[0] : fileId;
+      if (!id) throw new Error("File access denied. Obtain a fresh fileId from moodle_list_resources.");
+      const authorized = await client.downloadAuthorizedFile(id);
       if (!authorized) throw new Error("File access denied. Obtain a fresh fileId from moodle_list_resources.");
       const { ref, downloaded } = authorized;
       const mime = downloaded.mime || ref.mime || "application/octet-stream";
 
       if (isTextMime(mime)) {
-        const text = new TextDecoder("utf-8", { fatal: false }).decode(downloaded.bytes);
+        const text = truncateText(
+          new TextDecoder("utf-8", { fatal: false }).decode(downloaded.bytes),
+          TEXT_OUTPUT_POLICY.maxTextFileCharacters,
+        );
         return { contents: [{ uri: uri.href, mimeType: mime, text }] };
+      }
+      if (downloaded.bytes.length > TEXT_OUTPUT_POLICY.maxEmbeddedBinaryFileBytes) {
+        throw new Error("Binary file is too large to embed safely.");
       }
       return {
         contents: [{ uri: uri.href, mimeType: mime, blob: bytesToBase64(downloaded.bytes) }],

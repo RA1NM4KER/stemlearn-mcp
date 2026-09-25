@@ -1,11 +1,8 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getConfig, loadTokenFile } from "./config.js";
 import { MoodleClient } from "./moodle-client.js";
-import { registerAllTools } from "./register-tools.js";
-import { registerResources } from "./resources/index.js";
-import { registerPrompts } from "./prompts/index.js";
+import { createStemLearnServer } from "./create-server.js";
 
 const isConfigured = Boolean(process.env.MOODLE_URL || loadTokenFile());
 
@@ -49,14 +46,7 @@ async function main() {
   const config = getConfig();
   const client = await MoodleClient.create(config);
 
-  const server = new McpServer({
-    name: "stemlearn-mcp",
-    version: "0.1.0",
-  });
-
-  registerAllTools(server, client);
-  registerResources(server, client);
-  registerPrompts(server);
+  const server = createStemLearnServer(client);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

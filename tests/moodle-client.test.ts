@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MoodleClient } from "../src/moodle-client.js";
+import { z } from "zod";
+import { MoodleClient, MoodleClientError, MoodleTimeoutError, MoodleValidationError } from "../src/moodle-client.js";
+import { MoodleAssignmentsResponseSchema, MoodleCourseContentsSchema, MoodleCourseSchema, MoodleNotificationsResponseSchema } from "../src/moodle-api.js";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -27,7 +29,7 @@ describe("MoodleClient.create with token", () => {
 
     const client = await MoodleClient.create({
       baseUrl: "https://moodle.uni.edu",
-      token: "tok123",
+      auth: { kind: "token", token: "tok123" },
     });
 
     expect(client.userId).toBe(42);
@@ -50,8 +52,7 @@ describe("MoodleClient.create with username+password", () => {
 
     const client = await MoodleClient.create({
       baseUrl: "https://moodle.uni.edu",
-      username: "bob",
-      password: "pass",
+      auth: { kind: "password", username: "bob", password: "pass" },
     });
 
     expect(client.userId).toBe(7);
@@ -64,8 +65,21 @@ describe("MoodleClient.create with username+password", () => {
     mockFetch.mockResolvedValueOnce(mockOkJson({ error: "Invalid login" }));
 
     await expect(
-      MoodleClient.create({ baseUrl: "https://moodle.uni.edu", username: "x", password: "y" })
-    ).rejects.toThrow("Invalid login");
+      MoodleClient.create({ baseUrl: "https://moodle.uni.edu", auth: { kind: "password", username: "x", password: "y" } })
+    ).rejects.toThrow("Moodle login failed");
+  });
+
+  it("rejects malformed login data without exposing the upstream response", async () => {
+    mockFetch.mockResolvedValueOnce(mockOkJson({ error: { token: "secret" }, diagnostic: "https://moodle.uni.edu/login" }));
+
+    const error = await MoodleClient.create({
+      baseUrl: "https://moodle.uni.edu",
+      auth: { kind: "password", username: "x", password: "y" },
+    }).catch((caught: unknown) => caught);
+
+    expect(String(error)).toContain("unexpected response");
+    expect(String(error)).not.toContain("diagnostic");
+    expect(String(error)).not.toContain("secret");
   });
 });
 
@@ -74,7 +88,7 @@ describe("MoodleClient.call", () => {
 
   async function makeClient() {
     mockFetch.mockResolvedValueOnce(mockOkJson({ userid: 1, username: "a", sitename: "b", fullname: "c", release: "4.3.0" }));
-    return MoodleClient.create({ baseUrl: "https://moodle.uni.edu", token: "t" });
+    return MoodleClient.create({ baseUrl: "https://moodle.uni.edu", auth: { kind: "token", token: "t" } });
   }
 
   it("throws on webservicesnotenabled error", async () => {
@@ -84,7 +98,7 @@ describe("MoodleClient.call", () => {
       errorcode: "webservicesnotenabled",
       message: "Web services are disabled",
     }));
-    await expect(client.call("any_function")).rejects.toThrow("Web services are not enabled");
+    await expect(client.call("any_function", {}, z.unknown())).rejects.toThrow("Web services are not enabled");
   });
 
   it("throws on invalidtoken error", async () => {
@@ -94,14 +108,50 @@ describe("MoodleClient.call", () => {
       errorcode: "invalidtoken",
       message: "Invalid token",
     }));
-    await expect(client.call("any_function")).rejects.toThrow(/npm run auth/);
+    await expect(client.call("any_function", {}, z.unknown())).rejects.toMatchObject<MoodleClientError>({ code: "authentication" });
   });
 
   it("returns typed response on success", async () => {
     const client = await makeClient();
-    mockFetch.mockResolvedValueOnce(mockOkJson([{ id: 1, fullname: "Math 101" }]));
-    const result = await client.call<{ id: number; fullname: string }[]>("core_enrol_get_users_courses", { userid: 1 });
+    mockFetch.mockResolvedValueOnce(mockOkJson([{ id: 1, fullname: "Math 101", shortname: "M101" }]));
+    const result = await client.call("core_enrol_get_users_courses", { userid: 1 }, MoodleCourseSchema.array());
     expect(result[0].fullname).toBe("Math 101");
+  });
+
+  it("accepts harmless upstream fields and supplies safe defaults for omitted optional content fields", async () => {
+    const client = await makeClient();
+    mockFetch.mockResolvedValueOnce(mockOkJson([
+      { id: 7, upstreamaddition: { enabled: true } },
+    ]));
+
+    const result = await client.call("core_course_get_contents", { courseid: 1 }, MoodleCourseContentsSchema);
+
+    expect(result[0]).toMatchObject({ id: 7, name: "", summary: "", modules: [] });
+    expect(result[0].upstreamaddition).toEqual({ enabled: true });
+  });
+
+  it("rejects malformed critical Moodle data with a safe validation error", async () => {
+    const client = await makeClient();
+    mockFetch.mockResolvedValueOnce(mockOkJson([
+      { id: "not-a-number", fullname: "Math 101", shortname: "M101", diagnostic: "https://moodle.uni.edu/token=t" },
+    ]));
+
+    const error = await client.call("core_enrol_get_users_courses", { userid: 1 }, MoodleCourseSchema.array())
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(MoodleValidationError);
+    expect(String(error)).toContain("Moodle returned an unexpected response");
+    expect(String(error)).not.toContain("diagnostic");
+    expect(String(error)).not.toContain("token=t");
+  });
+
+  it("renders a missing required endpoint collection as a safe validation error", async () => {
+    const client = await makeClient();
+    mockFetch.mockResolvedValueOnce(mockOkJson({ diagnostic: "https://moodle.uni.edu/token=t" }));
+
+    const error = await client.call("mod_assign_get_assignments", {}, MoodleAssignmentsResponseSchema)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(MoodleValidationError);
+    expect(String(error)).not.toContain("token=t");
   });
 
   it("aborts a slow request with an MCP-safe timeout error", async () => {
@@ -110,7 +160,7 @@ describe("MoodleClient.call", () => {
       init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
     }));
     (client as unknown as { requestTimeoutMs: number }).requestTimeoutMs = 1;
-    await expect(client.call("slow_function")).rejects.toThrow("Moodle request timed out");
+    await expect(client.call("slow_function", {}, z.unknown())).rejects.toBeInstanceOf(MoodleTimeoutError);
   });
 
   // Regression test: Moodle's PARAM_BOOL rejects JS's "true"/"false" string
@@ -124,7 +174,7 @@ describe("MoodleClient.call", () => {
       useridto: 1,
       newestfirst: true,
       includepreviews: false,
-    });
+    }, MoodleNotificationsResponseSchema);
     const body = mockFetch.mock.calls.at(-1)?.[1]?.body as URLSearchParams;
     expect(body.get("newestfirst")).toBe("1");
     expect(body.get("includepreviews")).toBe("0");
@@ -135,7 +185,7 @@ describe("MoodleClient.call", () => {
 describe("MoodleClient.downloadFile", () => {
   async function makeAuthedClient() {
     mockFetch.mockResolvedValueOnce(mockOkJson({ userid: 1, username: "a", sitename: "b", fullname: "c", release: "4.3.0" }));
-    return MoodleClient.create({ baseUrl: "https://moodle.uni.edu", token: "mytoken" });
+    return MoodleClient.create({ baseUrl: "https://moodle.uni.edu", auth: { kind: "token", token: "mytoken" } });
   }
 
   it("refuses URLs on a different host", async () => {

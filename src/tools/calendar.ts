@@ -1,28 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-import { stripHtml } from "../text.js";
-
-interface CalendarEvent {
-  id: number;
-  name: string;
-  courseid: number;
-  timestart: number;
-  timeduration: number;
-  eventtype: string;
-  course?: { id: number; shortname: string; fullname: string };
-  description?: string;
-  url?: string;
-}
-
-interface CalendarResponse {
-  events: CalendarEvent[];
-}
-
-interface EnrolledCourse {
-  id: number;
-  fullname: string;
-}
+import { sanitizeAndTruncateHtml, truncateText } from "../text.js";
+import { CALENDAR_EVENT_POLICY, TEXT_OUTPUT_POLICY } from "../policy.js";
+import { loadActionCalendarEvents, loadCalendarEvents, loadEnrolledCourses } from "../moodle-loaders.js";
+import type { MoodleCalendarEvent } from "../moodle-api.js";
 
 // core_calendar_get_action_events_by_timesort only returns events with a
 // student-facing "action" (submit, attempt, etc). It silently omits plain
@@ -35,7 +17,7 @@ async function getPlainCalendarEvents(
   courseIds: number[],
   timestart: number,
   timeend: number,
-): Promise<CalendarEvent[]> {
+): Promise<MoodleCalendarEvent[]> {
   if (courseIds.length === 0 || !client.supports("core_calendar_get_calendar_events")) return [];
   const params: Record<string, number> = {
     "options[timestart]": timestart,
@@ -44,8 +26,8 @@ async function getPlainCalendarEvents(
   courseIds.forEach((id, i) => {
     params[`events[courseids][${i}]`] = id;
   });
-  const data = await client.call<CalendarResponse>("core_calendar_get_calendar_events", params);
-  return data.events ?? [];
+  const data = await loadCalendarEvents(client, params);
+  return data.events;
 }
 
 function formatDate(ts: number): string {
@@ -67,18 +49,9 @@ export async function getCalendarEvents(
   const now = Math.floor(Date.now() / 1000);
   const until = now + daysAhead * 86400;
 
-  const data = await client.call<CalendarResponse>(
-    "core_calendar_get_action_events_by_timesort",
-    {
-      timesortfrom: now,
-      timesortto: until,
-      limitnum: 50,
-    }
-  );
+  const data = await loadActionCalendarEvents(client, now, until);
 
-  const courses = await client.call<EnrolledCourse[]>("core_enrol_get_users_courses", {
-    userid: client.userId,
-  });
+  const courses = await loadEnrolledCourses(client);
   const courseNames = new Map(courses.map((c) => [c.id, c.fullname]));
   const plainCourseIds = courseId ? [courseId] : courses.map((c) => c.id);
   const plainEvents = await getPlainCalendarEvents(client, plainCourseIds, now, until);
@@ -89,12 +62,11 @@ export async function getCalendarEvents(
     seenIds.add(e.id);
     return true;
   });
-  events.sort((a, b) => a.timestart - b.timestart);
-  events = events.slice(0, 100);
-
   if (courseId) {
     events = events.filter((e) => e.courseid === courseId);
   }
+  events.sort((a, b) => a.timestart - b.timestart);
+  events = events.slice(0, CALENDAR_EVENT_POLICY.maxRendered);
 
   if (events.length === 0) {
     return courseId
@@ -103,11 +75,12 @@ export async function getCalendarEvents(
   }
 
   // Group by course
-  const byCourse = new Map<string, CalendarEvent[]>();
+  const byCourse = new Map<string, MoodleCalendarEvent[]>();
   for (const event of events) {
-    const key = event.course?.fullname ?? courseNames.get(event.courseid) ?? `Course ${event.courseid}`;
-    if (!byCourse.has(key)) byCourse.set(key, []);
-    byCourse.get(key)!.push(event);
+    const key = truncateText(event.course?.fullname ?? courseNames.get(event.courseid) ?? `Course ${event.courseid}`, TEXT_OUTPUT_POLICY.maxLabelCharacters);
+    const courseEvents = byCourse.get(key);
+    if (courseEvents) courseEvents.push(event);
+    else byCourse.set(key, [event]);
   }
 
   const lines: string[] = [`## Upcoming Events (next ${daysAhead} days)\n`];
@@ -115,15 +88,17 @@ export async function getCalendarEvents(
   for (const [courseName, courseEvents] of byCourse) {
     lines.push(`### ${courseName}`);
     for (const e of courseEvents) {
-      const type = e.eventtype ? `\`${e.eventtype}\`` : "";
-      lines.push(`- **${e.name}** — ${formatDate(e.timestart)} ${type}`);
-      const desc = e.description ? stripHtml(e.description).slice(0, 200) : "";
+      const type = e.eventtype ? `\`${truncateText(e.eventtype, TEXT_OUTPUT_POLICY.maxLabelCharacters)}\`` : "";
+      lines.push(`- **${truncateText(e.name, TEXT_OUTPUT_POLICY.maxLabelCharacters)}** — ${formatDate(e.timestart)} ${type}`);
+      const desc = e.description
+        ? sanitizeAndTruncateHtml(e.description, TEXT_OUTPUT_POLICY.maxCalendarDescriptionCharacters)
+        : "";
       if (desc) lines.push(`  ${desc}`);
     }
     lines.push("");
   }
 
-  return lines.join("\n");
+  return truncateText(lines.join("\n"), TEXT_OUTPUT_POLICY.maxMcpResponseCharacters);
 }
 
 export function registerCalendarTools(server: McpServer, client: MoodleClient): void {

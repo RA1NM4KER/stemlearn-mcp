@@ -15,3 +15,5 @@
 - Added HTTPS-only Moodle configuration (local HTTP development exception),
   centralized request deadlines, and bounded listing inputs/results.
 - Corrected prompts and project metadata to match the local stdio server.
+- Added runtime Moodle-response schemas, bounded text rendering, and an
+  experimental-only Worker transport note.

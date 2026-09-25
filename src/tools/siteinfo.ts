@@ -1,5 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
+import { TEXT_OUTPUT_POLICY } from "../policy.js";
+import { truncateText } from "../text.js";
 
 export function registerSiteInfoTool(server: McpServer, client: MoodleClient): void {
   server.tool(
@@ -11,8 +13,8 @@ export function registerSiteInfoTool(server: McpServer, client: MoodleClient): v
       const lines = [
         `## Moodle Site Info`,
         ``,
-        `**School:** ${client.siteName}`,
-        `**Version:** ${client.release}`,
+        `**School:** ${truncateText(client.siteName, TEXT_OUTPUT_POLICY.maxLabelCharacters)}`,
+        `**Version:** ${truncateText(client.release, TEXT_OUTPUT_POLICY.maxLabelCharacters)}`,
         `**Your user ID:** ${client.userId}`,
         `**Enabled WS functions:** ${enabledCount > 0 ? enabledCount : "Unknown (server did not report)"}`,
       ];
@@ -26,6 +28,7 @@ export function registerSiteInfoTool(server: McpServer, client: MoodleClient): v
           { name: "moodle_list_quizzes", fn: "mod_quiz_get_quizzes_by_courses" },
           { name: "moodle_get_quiz_attempts", fn: "mod_quiz_get_user_attempts" },
           { name: "moodle_get_forum_discussions", fn: "mod_forum_get_forum_discussions" },
+          { name: "moodle_list_forums", fn: "mod_forum_get_forums_by_courses" },
           { name: "moodle_get_notifications", fn: "message_popup_get_popup_notifications" },
         ];
 
@@ -37,7 +40,6 @@ export function registerSiteInfoTool(server: McpServer, client: MoodleClient): v
         lines.push(`- ✅ \`moodle_list_courses\` (always available)`);
         lines.push(`- ✅ \`moodle_get_course\` (always available)`);
         lines.push(`- ✅ \`moodle_list_resources\` (always available)`);
-        lines.push(`- ✅ \`moodle_list_forums\` (always available)`);
       }
 
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };

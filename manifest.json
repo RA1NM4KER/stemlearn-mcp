@@ -17,6 +17,7 @@
   "tools": [
     { "name": "moodle_list_courses", "description": "List enrolled courses" },
     { "name": "moodle_get_course", "description": "Read course structure" },
+    { "name": "moodle_get_course_notices", "description": "Verify current course notices and deadline conflicts" },
     { "name": "moodle_list_resources", "description": "List course files with opaque IDs" },
     { "name": "moodle_download_file", "description": "Read an authorized course file" },
     { "name": "course_overview", "description": "Summarize one course" },

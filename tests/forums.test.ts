@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MoodleClient } from "../src/moodle-client.js";
-import { listForumsRaw, getDiscussionsRaw, getForumDiscussions } from "../src/tools/forums.js";
+import { listForumsRaw, getDiscussionsRaw, getForumDiscussions, listForums } from "../src/tools/forums.js";
+import { FORUM_LIST_POLICY, TEXT_OUTPUT_POLICY } from "../src/policy.js";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -24,7 +25,7 @@ async function makeClient(supportedFunctions: string[]) {
       functions: supportedFunctions.map((name) => ({ name, version: "1" })),
     }),
   );
-  return MoodleClient.create({ baseUrl: "https://stemlearn.sun.ac.za", token: "tok" });
+  return MoodleClient.create({ baseUrl: "https://stemlearn.sun.ac.za", auth: { kind: "token", token: "tok" } });
 }
 
 describe("listForumsRaw", () => {
@@ -133,5 +134,35 @@ describe("getForumDiscussions (formatted output)", () => {
     expect(text).toContain("The tut test will cover Lectures 01 and 02.");
     expect(text).not.toContain("<p>");
     expect(text).not.toContain("<strong>");
+  });
+
+  it("bounds an oversized forum post while preserving a truncation marker", async () => {
+    const client = await makeClient(["mod_forum_get_forum_discussions"]);
+    mockFetch.mockResolvedValueOnce(mockOkJson({
+      discussions: [{
+        id: 1, discussion: 1, name: "Large post", userfullname: "Lecturer", numreplies: 0,
+        timemodified: 1, pinned: false, message: `<p>${"x".repeat(TEXT_OUTPUT_POLICY.maxForumPostCharacters + 1)}</p>`,
+      }],
+    }));
+
+    const text = await getForumDiscussions(client, 1);
+    expect(text).toContain("Text truncated after");
+    expect(text).not.toContain("<p>");
+  });
+});
+
+describe("forum output caps", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("caps rendered forum entries from a large response", async () => {
+    const client = await makeClient(["mod_forum_get_forums_by_courses"]);
+    const forums = Array.from({ length: FORUM_LIST_POLICY.maxRenderedForums + 1 }, (_, index) => ({
+      id: index + 1, cmid: index + 1, course: 1, name: `Forum ${index + 1}`, type: "general",
+    }));
+    mockFetch.mockResolvedValueOnce(mockOkJson(forums));
+
+    const text = await listForums(client, 1);
+    expect((text.match(/use with moodle_get_forum_discussions/g) ?? [])).toHaveLength(FORUM_LIST_POLICY.maxRenderedForums);
+    expect(text).toContain("Showing the first");
   });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MoodleClient } from "../src/moodle-client.js";
+import { MoodleClient, MoodleValidationError } from "../src/moodle-client.js";
 import { courseOverview, upcomingAndOverdue } from "../src/tools/composed.js";
+import { COMPOSED_TASK_POLICY } from "../src/policy.js";
 
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -43,7 +44,7 @@ async function makeClient() {
       functions: ALL_FUNCTIONS.map((name) => ({ name, version: "1" })),
     }),
   );
-  return MoodleClient.create({ baseUrl: "https://stemlearn.sun.ac.za", token: "tok" });
+  return MoodleClient.create({ baseUrl: "https://stemlearn.sun.ac.za", auth: { kind: "token", token: "tok" } });
 }
 
 const COURSE = { id: 2722, fullname: "Intro to Widgets", shortname: "WIDG101", progress: 8.3 };
@@ -150,6 +151,18 @@ describe("upcomingAndOverdue", () => {
     expect(text).toContain("graded");
   });
 
+  it("uses the shared assignment loader and safely rejects malformed assignment responses", async () => {
+    const client = await makeClient();
+    mockFetch.mockImplementation(routedFetchMock({
+      core_enrol_get_users_courses: [COURSE],
+      mod_assign_get_assignments: {
+        courses: [{ id: COURSE.id, assignments: [{ id: "bad", coursemodule: 1, name: "Broken" }] }],
+      },
+    }));
+
+    await expect(upcomingAndOverdue(client)).rejects.toBeInstanceOf(MoodleValidationError);
+  });
+
   it("moves assignments past their cutoffdate into Closed instead of Overdue", async () => {
     const client = await makeClient();
     const now = Math.floor(Date.now() / 1000);
@@ -205,5 +218,34 @@ describe("upcomingAndOverdue", () => {
     mockFetch.mockImplementation(routedFetchMock({ core_enrol_get_users_courses: [] }));
     const text = await upcomingAndOverdue(client);
     expect(text).toContain("not enrolled in any courses");
+  });
+
+  it("caps tasks and bounds concurrent submission-status requests", async () => {
+    const client = await makeClient();
+    const now = Math.floor(Date.now() / 1000);
+    const assignments = Array.from({ length: COMPOSED_TASK_POLICY.maxRendered + 5 }, (_, i) => ({
+      id: i + 1, coursemodule: i + 1, name: `Task ${i + 1}`, duedate: now + i + 1, cutoffdate: 0, grade: 100,
+    }));
+    let active = 0;
+    let peak = 0;
+    mockFetch.mockImplementation((_url: string, init: RequestInit) => {
+      const fn = (init.body as URLSearchParams).get("wsfunction");
+      if (fn === "core_enrol_get_users_courses") return jsonResponse([COURSE]);
+      if (fn === "mod_assign_get_assignments") return jsonResponse({ courses: [{ id: COURSE.id, assignments }] });
+      if (fn === "mod_assign_get_submission_status") {
+        active++;
+        peak = Math.max(peak, active);
+        return new Promise((resolve) => setTimeout(() => {
+          active--;
+          resolve(jsonResponse({ lastattempt: { submission: { status: "submitted" } } }));
+        }, 2));
+      }
+      throw new Error(`Unexpected wsfunction: ${fn}`);
+    });
+
+    const text = await upcomingAndOverdue(client);
+    expect(peak).toBeLessThanOrEqual(COMPOSED_TASK_POLICY.submissionStatusConcurrency);
+    expect((text.match(/assignment ID:/g) ?? [])).toHaveLength(COMPOSED_TASK_POLICY.maxRendered);
+    expect(text).toContain("additional assignments were omitted");
   });
 });

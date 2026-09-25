@@ -24,7 +24,7 @@ async function makeClient() {
       functions: [{ name: "core_course_get_contents", version: "1" }],
     }),
   );
-  return MoodleClient.create({ baseUrl: "https://stemlearn.sun.ac.za", token: "tok" });
+  return MoodleClient.create({ baseUrl: "https://stemlearn.sun.ac.za", auth: { kind: "token", token: "tok" } });
 }
 
 // Minimal fake McpServer that just captures the registered tool handler.
@@ -124,5 +124,16 @@ describe("moodle_list_resources", () => {
     const { server, schemas } = captureTool();
     registerFileTools(server as never, client);
     expect(() => schemas.get("moodle_list_resources")!.limit!.parse(101)).toThrow();
+  });
+
+  it("applies its global cap to links and folders as well as files", async () => {
+    const client = await makeClient();
+    const { server, handlers } = captureTool();
+    registerFileTools(server as never, client);
+    const modules = Array.from({ length: 101 }, (_, i) => ({ id: i, name: `Link ${i}`, modname: "url", url: `https://example.test/${i}` }));
+    mockFetch.mockResolvedValueOnce(mockOkJson([{ id: 1, name: "Links", modules }]));
+    const result = (await handlers.get("moodle_list_resources")!({ courseId: 1 })) as { content: { text: string }[] };
+    expect((result.content[0].text.match(/external link/g) ?? [])).toHaveLength(25);
+    expect(result.content[0].text).toContain("Showing the first 25");
   });
 });

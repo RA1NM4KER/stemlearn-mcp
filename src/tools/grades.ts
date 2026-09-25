@@ -1,42 +1,17 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-
-interface GradeItem {
-  id: number;
-  itemname: string | null;
-  itemtype: string;
-  itemmodule?: string;
-  graderaw: number | null;
-  grademax: number;
-  gradeformatted: string;
-  percentageformatted: string | null;
-  feedback: string | null;
-  categoryid?: number | null;
-}
-
-interface GradeCategory {
-  id: number;
-  fullname: string;
-}
-
-interface GradeReport {
-  usergrades: {
-    courseid: number;
-    gradeitems: GradeItem[];
-    gradecategories?: GradeCategory[];
-  }[];
-}
+import { loadGrades } from "../moodle-loaders.js";
+import type { MoodleGradeItem } from "../moodle-api.js";
+import { GRADE_LIST_POLICY, TEXT_OUTPUT_POLICY } from "../policy.js";
+import { sanitizeAndTruncateHtml, truncateText } from "../text.js";
 
 export async function getGrades(client: MoodleClient, courseId: number): Promise<string> {
   if (!client.supports("gradereport_user_get_grade_items")) {
     return "Grades API is not enabled on your Moodle. Ask your admin to enable the gradereport_user web service.";
   }
 
-  const report = await client.call<GradeReport>("gradereport_user_get_grade_items", {
-    courseid: courseId,
-    userid: client.userId,
-  });
+  const report = await loadGrades(client, courseId);
 
   const userGrades = report.usergrades[0];
   if (!userGrades || userGrades.gradeitems.length === 0) {
@@ -48,40 +23,56 @@ export async function getGrades(client: MoodleClient, courseId: number): Promise
   );
 
   const lines: string[] = [`## Grades — Course ${courseId}\n`];
+  const courseTotalItem = userGrades.gradeitems.find((item) => item.itemtype === "course");
+  const detailItemLimit = courseTotalItem
+    ? GRADE_LIST_POLICY.maxRenderedItems - 1
+    : GRADE_LIST_POLICY.maxRenderedItems;
 
   // Group items by category
-  const byCat = new Map<string, GradeItem[]>();
+  const byCat = new Map<string, MoodleGradeItem[]>();
   for (const item of userGrades.gradeitems) {
     if (item.itemtype === "course") continue; // Skip the course total row, add at end
     const catName = item.categoryid != null
       ? (categories.get(item.categoryid) ?? "Uncategorized")
       : "Uncategorized";
-    if (!byCat.has(catName)) byCat.set(catName, []);
-    byCat.get(catName)!.push(item);
+    const categoryItems = byCat.get(catName);
+    if (categoryItems) categoryItems.push(item);
+    else byCat.set(catName, [item]);
   }
 
+  let renderedItems = 0;
+  let omittedItems = 0;
   for (const [catName, items] of byCat) {
-    lines.push(`### ${catName}`);
+    const rendered = items.filter(() => {
+      if (renderedItems >= detailItemLimit) {
+        omittedItems++;
+        return false;
+      }
+      renderedItems++;
+      return true;
+    });
+    if (rendered.length === 0) continue;
+    lines.push(`### ${truncateText(catName, TEXT_OUTPUT_POLICY.maxLabelCharacters)}`);
     lines.push("| Item | Grade | Max | % | Feedback |");
     lines.push("|------|-------|-----|---|----------|");
-    for (const item of items.slice(0, 100)) {
-      const name = item.itemname ?? item.itemmodule ?? "—";
-      const grade = item.gradeformatted || "—";
+    for (const item of rendered) {
+      const name = truncateText(item.itemname ?? item.itemmodule ?? "—", TEXT_OUTPUT_POLICY.maxLabelCharacters);
+      const grade = truncateText(item.gradeformatted || "—", TEXT_OUTPUT_POLICY.maxLabelCharacters);
       const max = item.grademax > 0 ? String(item.grademax) : "—";
       const pct = item.percentageformatted ?? "—";
-      const feedback = (item.feedback ?? "").replace(/\n/g, " ").slice(0, 60) || "—";
+      const feedback = sanitizeAndTruncateHtml(item.feedback ?? "", TEXT_OUTPUT_POLICY.maxGradeFeedbackCharacters).replace(/\n/g, " ") || "—";
       lines.push(`| ${name} | ${grade} | ${max} | ${pct} | ${feedback} |`);
     }
     lines.push("");
   }
 
   // Course total
-  const courseTotalItem = userGrades.gradeitems.find((i) => i.itemtype === "course");
   if (courseTotalItem) {
-    lines.push(`**Course Total:** ${courseTotalItem.gradeformatted} / ${courseTotalItem.grademax} (${courseTotalItem.percentageformatted ?? "—"})`);
+    lines.push(`**Course Total:** ${truncateText(courseTotalItem.gradeformatted, TEXT_OUTPUT_POLICY.maxLabelCharacters)} / ${courseTotalItem.grademax} (${truncateText(courseTotalItem.percentageformatted ?? "—", TEXT_OUTPUT_POLICY.maxLabelCharacters)})`);
   }
+  if (omittedItems) lines.push(`\n_Showing the first ${GRADE_LIST_POLICY.maxRenderedItems} grade items; ${omittedItems} additional items were omitted._`);
 
-  return lines.join("\n");
+  return truncateText(lines.join("\n"), TEXT_OUTPUT_POLICY.maxMcpResponseCharacters);
 }
 
 export function registerGradeTools(server: McpServer, client: MoodleClient): void {
