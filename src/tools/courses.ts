@@ -32,10 +32,11 @@ export async function listCourses(client: MoodleClient): Promise<string> {
     userid: client.userId,
   });
   if (courses.length === 0) return "You are not enrolled in any courses.";
-  const lines = courses.map(
+  const displayed = courses.slice(0, 100);
+  const lines = displayed.map(
     (c) => `- **${c.fullname}** (${c.shortname}) — ID: \`${c.id}\``
   );
-  return `## Your Courses\n\n${lines.join("\n")}`;
+  return `## Your Courses\n\n${lines.join("\n")}${courses.length > displayed.length ? "\n\n_Showing the first 100 courses._" : ""}`;
 }
 
 export async function getCourse(client: MoodleClient, courseId: number): Promise<string> {
@@ -44,14 +45,13 @@ export async function getCourse(client: MoodleClient, courseId: number): Promise
   });
   if (sections.length === 0) return "This course has no content.";
   const lines: string[] = [];
-  for (const section of sections) {
+  for (const section of sections.slice(0, 100)) {
     const summary = section.summary ? stripHtml(section.summary) : "";
     if (section.modules.length === 0 && !summary) continue;
     lines.push(`### ${section.name || "General"}`);
     if (summary) lines.push(summary, "");
-    for (const mod of section.modules) {
-      const link = mod.url ? ` — [open](${mod.url})` : "";
-      lines.push(`- \`${mod.modname}\` **${mod.name}**${link}`);
+    for (const mod of section.modules.slice(0, 100)) {
+      lines.push(`- \`${mod.modname}\` **${mod.name}**`);
     }
   }
   return lines.length ? lines.join("\n") : "This course has no content.";

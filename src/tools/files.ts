@@ -25,6 +25,8 @@ interface CourseSection {
 }
 
 const FILE_MODS = new Set(["resource", "url", "folder"]);
+const DEFAULT_FILE_LIMIT = 25;
+const MAX_FILE_LIMIT = 100;
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -36,22 +38,18 @@ async function listResources(
   client: MoodleClient,
   courseId: number,
   filenameFilter?: string,
+  limit = DEFAULT_FILE_LIMIT,
 ): Promise<string> {
   const sections = await client.call<CourseSection[]>("core_course_get_contents", {
     courseid: courseId,
   });
 
-  // Sealing every file's fileId up front (one AES-GCM envelope per file,
-  // ~300-400 chars each) blows the tool output token limit on courses with
-  // many files — confirmed against a real course with 40+ resources across
-  // its weekly sections. So: browsing (no filter) never seals IDs, it just
-  // lists names/sizes. Passing filenameFilter narrows to matching files and
-  // seals fileIds only for that (small) matching set.
   const needle = filenameFilter?.toLowerCase();
 
   const lines: string[] = [`## Files — Course ${courseId}\n`];
   let hasFiles = false;
   let matchCount = 0;
+  let omitted = 0;
 
   for (const section of sections) {
     const fileMods = section.modules.filter((m) => FILE_MODS.has(m.modname));
@@ -62,13 +60,7 @@ async function listResources(
     for (const mod of fileMods) {
       if (mod.modname === "url") {
         if (needle && !mod.name.toLowerCase().includes(needle)) continue;
-        // External link (not a Moodle-hosted file). Safe to show as-is — it's
-        // whatever the professor linked, and moodle_download_file cannot fetch it.
-        if (mod.url) {
-          sectionLines.push(`- 🔗 [${mod.name}](${mod.url}) *(external)*`);
-        } else {
-          sectionLines.push(`- 🔗 **${mod.name}** *(external)*`);
-        }
+        sectionLines.push(`- 🔗 **${mod.name}** *(external link; not downloadable)*`);
         continue;
       }
       if (!mod.contents || mod.contents.length === 0) {
@@ -79,22 +71,12 @@ async function listResources(
       for (const file of mod.contents) {
         if (file.type !== "file") continue;
         if (needle && !file.filename.toLowerCase().includes(needle)) continue;
+        if (matchCount >= limit) { omitted++; continue; }
         const size = formatSize(file.filesize);
         matchCount++;
-        if (needle) {
-          const mime = file.mimetype ?? "application/octet-stream";
-          const fileId = await client.fileIdStore.seal({
-            userId: client.userId,
-            courseId,
-            fileurl: file.fileurl,
-            mime,
-            filename: file.filename,
-            filesize: file.filesize,
-          });
-          sectionLines.push(`- 📄 **${file.filename}** *(${size})* — fileId: \`${fileId}\``);
-        } else {
-          sectionLines.push(`- 📄 **${file.filename}** *(${size})*`);
-        }
+        const mime = file.mimetype ?? "application/octet-stream";
+        const fileId = await client.fileIdStore.seal({ userId: client.userId, courseId, fileurl: file.fileurl, mime, filename: file.filename, filesize: file.filesize });
+        sectionLines.push(`- 📄 **${file.filename}** *(${size})* — fileId: \`${fileId}\` — resource: \`moodle://files/${fileId}\``);
       }
     }
 
@@ -109,18 +91,8 @@ async function listResources(
       : "No downloadable files found in this course.";
   }
 
-  if (needle) {
-    lines.push(
-      matchCount > 0
-        ? "_Call `moodle_download_file` with a fileId above to read the file's contents._"
-        : "",
-    );
-  } else {
-    lines.push(
-      "_This is a browsing view — fileIds aren't included here to keep the listing short._",
-      '_Call `moodle_list_resources` again with `filenameFilter` set to (part of) a file\'s name to get its fileId for `moodle_download_file`._',
-    );
-  }
+  if (omitted) lines.push(`_Showing the first ${limit} matching files. Refine filenameFilter to find other materials._`);
+  lines.push("_Use a listed fileId with `moodle_download_file`, or read its `moodle://files/{fileId}` resource URI._");
   return lines.join("\n");
 }
 
@@ -133,10 +105,11 @@ export function registerFileTools(server: McpServer, client: MoodleClient): void
       filenameFilter: z
         .string()
         .optional()
-        .describe("Substring to match against file/link names (case-insensitive). Required to get a fileId back."),
+        .describe("Substring to match against file/link names (case-insensitive)."),
+      limit: z.number().int().min(1).max(MAX_FILE_LIMIT).optional().describe("Maximum downloadable files to return (default: 25, max: 100)."),
     },
-    async ({ courseId, filenameFilter }) => ({
-      content: [{ type: "text" as const, text: await listResources(client, courseId, filenameFilter) }],
+    async ({ courseId, filenameFilter, limit }) => ({
+      content: [{ type: "text" as const, text: await listResources(client, courseId, filenameFilter, limit) }],
     }),
   );
 }

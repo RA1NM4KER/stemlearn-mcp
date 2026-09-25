@@ -105,8 +105,11 @@ export class FileIdStore {
         await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct),
       );
       const payload = JSON.parse(new TextDecoder().decode(plaintext)) as SealedPayload;
-      if (payload.exp < Date.now()) return null;
-      if (payload.userId !== expectedUserId) return null;
+      if (!Number.isFinite(payload.exp) || payload.exp < Date.now()) return null;
+      if (!Number.isSafeInteger(payload.userId) || payload.userId !== expectedUserId) return null;
+      if (!Number.isSafeInteger(payload.courseId) || payload.courseId <= 0 ||
+          typeof payload.fileurl !== "string" || typeof payload.mime !== "string" ||
+          typeof payload.filename !== "string" || !Number.isFinite(payload.filesize)) return null;
       const { exp: _exp, ...ref } = payload;
       return ref;
     } catch {

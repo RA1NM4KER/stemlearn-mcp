@@ -1,83 +1,26 @@
 {
   "manifest_version": "0.3",
-  "name": "moodle-mcp",
-  "display_name": "Moodle MCP",
-  "version": "0.1.2",
-  "description": "Give Claude access to your Moodle courses, assignments, grades, quizzes, calendar, forums, and notifications.",
-  "long_description": "Moodle MCP connects Claude to any Moodle LMS instance. Ask about upcoming deadlines, check your grades, browse course resources, read assignment feedback, and more — all in natural language.\n\nSupports token-based auth (recommended) or username/password login.",
-  "author": {
-    "name": "1alexandrer",
-    "url": "https://github.com/1alexandrer"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/1alexandrer/moodle-mcp"
-  },
-  "homepage": "https://github.com/1alexandrer/moodle-mcp#readme",
-  "support": "https://github.com/1alexandrer/moodle-mcp/issues",
+  "name": "stemlearn-mcp",
+  "display_name": "STEMLearn MCP",
+  "version": "0.1.0",
+  "description": "Read-only local MCP server for STEMLearn Moodle students.",
+  "long_description": "Runs locally over stdio using the token created by npm run auth. Provides read-only access to enrolled courses, course materials, deadlines, grades, forums, and notifications.",
+  "author": { "name": "STEMLearn" },
   "license": "MIT",
-  "keywords": ["moodle", "education", "lms", "courses", "grades", "assignments"],
+  "keywords": ["stemlearn", "moodle", "mcp", "education"],
   "server": {
     "type": "node",
     "entry_point": "dist/server.js",
-    "mcp_config": {
-      "command": "node",
-      "args": ["${__dirname}/dist/server.js"],
-      "env": {
-        "MOODLE_URL": "${user_config.moodle_url}",
-        "MOODLE_TOKEN": "${user_config.moodle_token}",
-        "MOODLE_USERNAME": "${user_config.moodle_username}",
-        "MOODLE_PASSWORD": "${user_config.moodle_password}"
-      }
-    }
+    "mcp_config": { "command": "node", "args": ["${__dirname}/dist/server.js"], "env": {} }
   },
-  "user_config": {
-    "moodle_url": {
-      "type": "string",
-      "title": "Moodle URL",
-      "description": "Your Moodle site URL (e.g. https://moodle.myschool.edu)",
-      "required": true
-    },
-    "moodle_token": {
-      "type": "string",
-      "title": "Moodle API Token",
-      "description": "Web service token from Moodle → Preferences → Security keys. Leave blank to use username/password instead.",
-      "sensitive": true,
-      "required": false
-    },
-    "moodle_username": {
-      "type": "string",
-      "title": "Moodle Username",
-      "description": "Your Moodle login username. Only needed if not using an API token.",
-      "required": false
-    },
-    "moodle_password": {
-      "type": "string",
-      "title": "Moodle Password",
-      "description": "Your Moodle login password. Only needed if not using an API token.",
-      "sensitive": true,
-      "required": false
-    }
-  },
+  "user_config": {},
   "tools": [
-    { "name": "moodle_get_site_info", "description": "Get information about your Moodle server and account" },
-    { "name": "moodle_list_courses", "description": "List all Moodle courses you are enrolled in" },
-    { "name": "moodle_get_course", "description": "Get sections and modules of a specific course" },
-    { "name": "moodle_list_resources", "description": "List all downloadable files and links in a course" },
-    { "name": "moodle_list_assignments", "description": "List all assignments in a course with due dates and grade info" },
-    { "name": "moodle_get_assignment", "description": "Get submission status and grade feedback for an assignment" },
-    { "name": "moodle_get_grades", "description": "Get your full grade report for a course" },
-    { "name": "moodle_get_calendar_events", "description": "Get upcoming calendar events filtered by date or course" },
-    { "name": "moodle_list_quizzes", "description": "List all quizzes in a course with attempt counts and dates" },
-    { "name": "moodle_get_quiz_attempts", "description": "Get your attempt history for a specific quiz" },
-    { "name": "moodle_list_forums", "description": "List all forum activities in a course" },
-    { "name": "moodle_get_forum_discussions", "description": "Get recent discussions in a forum" },
-    { "name": "moodle_get_notifications", "description": "Get your recent Moodle notifications" }
+    { "name": "moodle_list_courses", "description": "List enrolled courses" },
+    { "name": "moodle_get_course", "description": "Read course structure" },
+    { "name": "moodle_list_resources", "description": "List course files with opaque IDs" },
+    { "name": "moodle_download_file", "description": "Read an authorized course file" },
+    { "name": "course_overview", "description": "Summarize one course" },
+    { "name": "upcoming_and_overdue", "description": "List deadlines across courses" }
   ],
-  "compatibility": {
-    "platforms": ["darwin", "win32"],
-    "runtimes": {
-      "node": ">=18.0.0"
-    }
-  }
+  "compatibility": { "platforms": ["darwin", "win32", "linux"], "runtimes": { "node": ">=18.0.0" } }
 }

@@ -63,6 +63,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Failed to start moodle-mcp:", err.message);
+  console.error("Failed to start STEMLearn MCP:", err.message);
   process.exit(1);
 });

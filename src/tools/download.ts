@@ -1,20 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { MoodleClient } from "../moodle-client.js";
-import type { FileRef } from "../file-id-store.js";
-
-interface ModuleContent {
-  type: string;
-  fileurl: string;
-}
-
-interface CourseModule {
-  contents?: ModuleContent[];
-}
-
-interface CourseSection {
-  modules: CourseModule[];
-}
 
 const TEXT_MIMES = new Set([
   "application/json",
@@ -37,29 +23,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
-/**
- * Re-check that the file behind this ref is still visible to the current
- * user. Catches unenrolment, module hides, file removal between the list
- * call and the download call.
- */
-async function reauthorize(client: MoodleClient, ref: FileRef): Promise<boolean> {
-  try {
-    const sections = await client.call<CourseSection[]>("core_course_get_contents", {
-      courseid: ref.courseId,
-    });
-    for (const section of sections) {
-      for (const mod of section.modules) {
-        for (const file of mod.contents ?? []) {
-          if (file.type === "file" && file.fileurl === ref.fileurl) return true;
-        }
-      }
-    }
-  } catch {
-    return false;
-  }
-  return false;
-}
-
 export function registerDownloadTool(server: McpServer, client: MoodleClient): void {
   server.tool(
     "moodle_download_file",
@@ -68,8 +31,13 @@ export function registerDownloadTool(server: McpServer, client: MoodleClient): v
       fileId: z.string().describe("Opaque fileId returned by moodle_list_resources"),
     },
     async ({ fileId }) => {
-      const ref = await client.fileIdStore.open(fileId, client.userId);
-      if (!ref) {
+      let authorized;
+      try { authorized = await client.downloadAuthorizedFile(fileId); } catch (err) {
+        const message = err instanceof Error && err.message === "Moodle request timed out. Please try again."
+          ? err.message : "File download failed. Please try again.";
+        return { isError: true, content: [{ type: "text" as const, text: message }] };
+      }
+      if (!authorized) {
         return {
           isError: true,
           content: [
@@ -81,32 +49,10 @@ export function registerDownloadTool(server: McpServer, client: MoodleClient): v
         };
       }
 
-      const visible = await reauthorize(client, ref);
-      if (!visible) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text" as const,
-              text: "Access denied: this file is no longer visible to you (unenrolled, hidden, or removed).",
-            },
-          ],
-        };
-      }
-
-      let downloaded;
-      try {
-        downloaded = await client.downloadFile(ref.fileurl);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        return {
-          isError: true,
-          content: [{ type: "text" as const, text: `Download failed: ${message}` }],
-        };
-      }
+      const { ref, downloaded } = authorized;
 
       const mime = downloaded.mime || ref.mime || "application/octet-stream";
-      const resourceUri = `moodle://files/${encodeURIComponent(ref.filename)}`;
+      const resourceUri = `moodle://files/${fileId}`;
 
       if (isTextMime(mime)) {
         const text = new TextDecoder("utf-8", { fatal: false }).decode(downloaded.bytes);

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { normalizeUrl, parseMaxFileMb } from "./config.js";
+import { normalizeUrl, parseMaxFileMb, parseRequestTimeoutMs } from "./config.js";
 import { MoodleClient } from "./moodle-client.js";
 import { registerAllTools } from "./register-tools.js";
 import { registerResources } from "./resources/index.js";
@@ -10,6 +10,7 @@ interface Env {
   MOODLE_URL: string;
   MOODLE_TOKEN: string;
   MOODLE_MCP_MAX_FILE_MB?: string;
+  MOODLE_MCP_REQUEST_TIMEOUT_MS?: string;
 }
 
 export default {
@@ -25,14 +26,16 @@ export default {
 
     try {
       const maxFileBytes = Math.floor(parseMaxFileMb(env.MOODLE_MCP_MAX_FILE_MB) * 1024 * 1024);
+      const requestTimeoutMs = parseRequestTimeoutMs(env.MOODLE_MCP_REQUEST_TIMEOUT_MS);
       const config = {
         baseUrl: normalizeUrl(env.MOODLE_URL),
         token: env.MOODLE_TOKEN,
         maxFileBytes,
+        requestTimeoutMs,
       };
       const client = await MoodleClient.create(config);
 
-      const server = new McpServer({ name: "moodle-mcp", version: "0.2.0" });
+      const server = new McpServer({ name: "stemlearn-mcp", version: "0.1.0" });
 
       registerAllTools(server, client);
       registerResources(server, client);

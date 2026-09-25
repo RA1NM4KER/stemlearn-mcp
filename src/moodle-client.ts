@@ -1,5 +1,6 @@
 import type { Config } from "./config.js";
-import { FileIdStore } from "./file-id-store.js";
+import { DEFAULT_MAX_FILE_MB, DEFAULT_REQUEST_TIMEOUT_MS } from "./config.js";
+import { FileIdStore, type FileRef } from "./file-id-store.js";
 
 export interface SiteInfo {
   userid: number;
@@ -30,15 +31,18 @@ export class MoodleClient {
 
   private readonly baseHost: string;
   readonly maxFileBytes: number;
+  readonly requestTimeoutMs: number;
 
   private constructor(
     readonly baseUrl: string,
     private readonly token: string,
-    maxFileBytes: number,
+    maxFileBytes = DEFAULT_MAX_FILE_MB * 1024 * 1024,
+    requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   ) {
     this.baseHost = new URL(baseUrl).host;
     this.fileIdStore = new FileIdStore(token);
     this.maxFileBytes = maxFileBytes;
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   /** Returns true if the WS function is available on this Moodle server. */
@@ -50,8 +54,8 @@ export class MoodleClient {
   static async create(config: Config): Promise<MoodleClient> {
     const token =
       config.token ??
-      (await MoodleClient.login(config.baseUrl, config.username!, config.password!));
-    const client = new MoodleClient(config.baseUrl, token, config.maxFileBytes);
+      (await MoodleClient.login(config.baseUrl, config.username!, config.password!, config.requestTimeoutMs));
+    const client = new MoodleClient(config.baseUrl, token, config.maxFileBytes, config.requestTimeoutMs);
     const info = await client.call<SiteInfo>("core_webservice_get_site_info");
     client.userId = info.userid;
     client.siteName = info.sitename;
@@ -60,10 +64,30 @@ export class MoodleClient {
     return client;
   }
 
-  private static async login(baseUrl: string, username: string, password: string): Promise<string> {
+  private async fetch(url: string, init: RequestInit = {}): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        throw new Error("Moodle request timed out. Please try again.");
+      }
+      throw new Error("Unable to reach Moodle. Please try again.");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private static async login(baseUrl: string, username: string, password: string, requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<string> {
     const url = `${baseUrl}/login/token.php`;
     const body = new URLSearchParams({ username, password, service: "moodle_mobile_app" });
-    const res = await fetch(url, { method: "POST", body });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+    let res: Response;
+    try { res = await fetch(url, { method: "POST", body, signal: controller.signal }); }
+    catch { throw new Error("Moodle login request timed out or could not reach Moodle."); }
+    finally { clearTimeout(timer); }
     const text = await res.text();
     let data: { token?: string; error?: string };
     try {
@@ -105,8 +129,8 @@ export class MoodleClient {
         ]),
       ),
     });
-    const res = await fetch(url, { method: "POST", body });
-    if (!res.ok) throw new Error(`HTTP ${res.status} from Moodle API`);
+    const res = await this.fetch(url, { method: "POST", body });
+    if (!res.ok) throw new Error("Moodle API request failed. Please try again.");
     const data = (await res.json()) as T & Partial<MoodleErrorResponse>;
     if (data.exception) {
       if (data.errorcode === "webservicesnotenabled") {
@@ -119,7 +143,7 @@ export class MoodleClient {
           "Invalid or expired Moodle token. Run `npm run auth` to sign in again and get a fresh one."
         );
       }
-      throw new Error(`Moodle API error (${data.errorcode ?? "unknown"}): ${data.message ?? "No message"}`);
+      throw new Error("Moodle API request was rejected. Check that you still have access.");
     }
     return data;
   }
@@ -133,6 +157,36 @@ export class MoodleClient {
    * reappears in anything returned to the MCP client.
    */
   async downloadFile(fileurl: string): Promise<DownloadedFile> {
+    this.assertSafeFileUrl(fileurl);
+    const parsed = new URL(fileurl);
+    parsed.searchParams.set("token", this.token);
+    const res = await this.fetch(parsed.toString());
+    return this.readDownloadedFile(res);
+  }
+
+  /** Validate a sealed file ref and re-check Moodle's current course access. */
+  async authorizeFile(fileId: string): Promise<FileRef | null> {
+    const ref = await this.fileIdStore.open(fileId, this.userId);
+    if (!ref) return null;
+    try { this.assertSafeFileUrl(ref.fileurl); } catch { return null; }
+    try {
+      const sections = await this.call<{ modules: { contents?: { type: string; fileurl: string }[] }[] }[]>("core_course_get_contents", { courseid: ref.courseId });
+      return sections.some((section) => section.modules.some((mod) =>
+        (mod.contents ?? []).some((file) => file.type === "file" && file.fileurl === ref.fileurl),
+      )) ? ref : null;
+    } catch (error) {
+      if (error instanceof Error && error.message === "Moodle request timed out. Please try again.") throw error;
+      return null;
+    }
+  }
+
+  async downloadAuthorizedFile(fileId: string): Promise<{ ref: FileRef; downloaded: DownloadedFile } | null> {
+    const ref = await this.authorizeFile(fileId);
+    if (!ref) return null;
+    return { ref, downloaded: await this.downloadFile(ref.fileurl) };
+  }
+
+  private assertSafeFileUrl(fileurl: string): void {
     let parsed: URL;
     try {
       parsed = new URL(fileurl);
@@ -142,15 +196,18 @@ export class MoodleClient {
     if (parsed.host !== this.baseHost) {
       throw new Error("Refused: file URL is not on this Moodle host");
     }
+    if (parsed.protocol !== new URL(this.baseUrl).protocol) {
+      throw new Error("Refused: file URL does not use the configured Moodle protocol");
+    }
     if (
       !parsed.pathname.includes("/pluginfile.php") &&
       !parsed.pathname.includes("/webservice/pluginfile.php")
     ) {
       throw new Error("Refused: only Moodle-managed pluginfile.php URLs can be fetched");
     }
-    parsed.searchParams.set("token", this.token);
+  }
 
-    const res = await fetch(parsed.toString());
+  private async readDownloadedFile(res: Response): Promise<DownloadedFile> {
     if (!res.ok) throw new Error(`Failed to fetch file: HTTP ${res.status}`);
 
     const maxMb = Math.round(this.maxFileBytes / 1024 / 1024);

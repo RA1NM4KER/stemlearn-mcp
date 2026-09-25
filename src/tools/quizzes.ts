@@ -64,14 +64,14 @@ export async function listQuizzes(client: MoodleClient, courseId: number): Promi
   const lines: string[] = [`## Quizzes — Course ${courseId}\n`];
   let hasAny = false;
 
-  for (const section of sections) {
+  for (const section of sections.slice(0, 100)) {
     const quizMods = section.modules.filter((m) => m.modname === "quiz");
     if (quizMods.length === 0) continue;
 
     lines.push(`### ${section.name || "General"}`);
     hasAny = true;
 
-    for (const mod of quizMods) {
+    for (const mod of quizMods.slice(0, 100)) {
       const q = byModule.get(mod.id);
       if (!q) {
         lines.push(`- **${mod.name}** *(details unavailable)*`);

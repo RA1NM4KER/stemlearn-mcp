@@ -64,7 +64,7 @@ export async function getGrades(client: MoodleClient, courseId: number): Promise
     lines.push(`### ${catName}`);
     lines.push("| Item | Grade | Max | % | Feedback |");
     lines.push("|------|-------|-----|---|----------|");
-    for (const item of items) {
+    for (const item of items.slice(0, 100)) {
       const name = item.itemname ?? item.itemmodule ?? "—";
       const grade = item.gradeformatted || "—";
       const max = item.grademax > 0 ? String(item.grademax) : "—";

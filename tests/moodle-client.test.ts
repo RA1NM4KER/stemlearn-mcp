@@ -104,6 +104,15 @@ describe("MoodleClient.call", () => {
     expect(result[0].fullname).toBe("Math 101");
   });
 
+  it("aborts a slow request with an MCP-safe timeout error", async () => {
+    const client = await makeClient();
+    mockFetch.mockImplementationOnce((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    }));
+    (client as unknown as { requestTimeoutMs: number }).requestTimeoutMs = 1;
+    await expect(client.call("slow_function")).rejects.toThrow("Moodle request timed out");
+  });
+
   // Regression test: Moodle's PARAM_BOOL rejects JS's "true"/"false" string
   // serialization with invalidparameter. Confirmed against a real Moodle
   // server (message_popup_get_popup_notifications) — see docs/findings.md

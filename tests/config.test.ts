@@ -24,6 +24,12 @@ describe("normalizeUrl", () => {
   it("throws on invalid URL", () => {
     expect(() => normalizeUrl("not-a-url")).toThrow("Invalid MOODLE_URL");
   });
+
+  it("requires HTTPS except for explicit local development hosts", () => {
+    expect(() => normalizeUrl("http://moodle.uni.edu")).toThrow(/HTTPS/);
+    expect(normalizeUrl("http://localhost:8080")).toBe("http://localhost:8080");
+    expect(normalizeUrl("http://127.0.0.1:8080")).toBe("http://127.0.0.1:8080");
+  });
 });
 
 describe("getConfig", () => {

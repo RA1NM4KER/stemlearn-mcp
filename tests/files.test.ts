@@ -30,12 +30,14 @@ async function makeClient() {
 // Minimal fake McpServer that just captures the registered tool handler.
 function captureTool() {
   const handlers = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+  const schemas = new Map<string, { limit?: { parse: (value: unknown) => unknown } }>();
   const server = {
-    tool: (name: string, _desc: string, _schema: unknown, handler: (args: Record<string, unknown>) => Promise<unknown>) => {
+    tool: (name: string, _desc: string, schema: { limit?: { parse: (value: unknown) => unknown } }, handler: (args: Record<string, unknown>) => Promise<unknown>) => {
       handlers.set(name, handler);
+      schemas.set(name, schema);
     },
   };
-  return { server, handlers };
+  return { server, handlers, schemas };
 }
 
 const MANY_FILES_COURSE = [
@@ -72,7 +74,7 @@ const MANY_FILES_COURSE = [
 describe("moodle_list_resources", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("browsing without filenameFilter lists files but omits fileId", async () => {
+  it("browsing without filenameFilter lists files with usable opaque file IDs and resource URIs", async () => {
     const client = await makeClient();
     const { server, handlers } = captureTool();
     registerFileTools(server as never, client);
@@ -85,11 +87,8 @@ describe("moodle_list_resources", () => {
 
     expect(text).toContain("Lecture 1.pdf");
     expect(text).toContain("Practical 2.pdf");
-    // Regression: sealing a fileId per file for every file in a course blew
-    // the tool output token limit on a real course with 40+ resources.
-    // Browsing without a filter must never seal/print a fileId.
-    expect(text).not.toContain("fileId:");
-    expect(text).toContain("filenameFilter");
+    expect(text).toContain("fileId:");
+    expect(text).toContain("moodle://files/f_");
   });
 
   it("with filenameFilter, returns only matching files and includes their fileId", async () => {
@@ -107,5 +106,23 @@ describe("moodle_list_resources", () => {
     expect(text).toContain("Practical 2.pdf");
     expect(text).toContain("fileId:");
     expect(text).not.toContain("Lecture 1.pdf");
+  });
+
+  it("uses a default file cap for large upstream responses", async () => {
+    const client = await makeClient();
+    const { server, handlers } = captureTool();
+    registerFileTools(server as never, client);
+    const contents = Array.from({ length: 101 }, (_, i) => ({ type: "file", filename: `file-${i}.pdf`, fileurl: `https://x/${i}`, filesize: 1 }));
+    mockFetch.mockResolvedValueOnce(mockOkJson([{ id: 1, name: "Files", modules: [{ id: 1, name: "Files", modname: "folder", contents }] }]));
+    const result = (await handlers.get("moodle_list_resources")!({ courseId: 1 })) as { content: { text: string }[] };
+    expect((result.content[0].text.match(/fileId:/g) ?? [])).toHaveLength(25);
+    expect(result.content[0].text).toContain("Showing the first 25");
+  });
+
+  it("rejects a file listing limit above the documented maximum", async () => {
+    const client = await makeClient();
+    const { server, schemas } = captureTool();
+    registerFileTools(server as never, client);
+    expect(() => schemas.get("moodle_list_resources")!.limit!.parse(101)).toThrow();
   });
 });

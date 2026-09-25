@@ -63,7 +63,7 @@ export function registerNotificationTools(server: McpServer, client: MoodleClien
   server.tool(
     "moodle_get_notifications",
     "Get the student's recent Moodle notifications (grade returns, assignment feedback, forum replies, deadline reminders, etc.). Unread items are marked with 🔵.",
-    { limit: z.number().optional().describe("Number of notifications to fetch (default: 20)") },
+    { limit: z.number().int().min(1).max(100).optional().describe("Number of notifications to fetch (default: 20, max: 100)") },
     async ({ limit }) => ({
       content: [{ type: "text" as const, text: await getNotifications(client, limit) }],
     })

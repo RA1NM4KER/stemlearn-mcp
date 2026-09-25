@@ -1,7 +1,7 @@
 {
   "name": "stemlearn-mcp",
   "version": "0.1.0",
-  "description": "Student-focused, read-only MCP server for STEMLearn (Stellenbosch University's Moodle) — courses, deadlines, grades, and course files. Fork of 1alexandrer/moodle-mcp.",
+  "description": "Read-only local MCP server for STEMLearn Moodle students.",
   "type": "module",
   "bin": {
     "stemlearn-mcp": "./dist/server.js"
@@ -16,7 +16,6 @@
     "auth": "node scripts/auth.mjs",
     "build": "tsc",
     "start": "npm run build && node dist/server.js",
-    "deploy": "wrangler deploy",
     "dev": "npx @modelcontextprotocol/inspector node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",

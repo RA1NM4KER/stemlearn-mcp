@@ -61,14 +61,14 @@ export async function listAssignments(client: MoodleClient, courseId: number): P
   const lines: string[] = [`## Assignments — Course ${courseId}\n`];
   let hasAny = false;
 
-  for (const section of sections) {
+  for (const section of sections.slice(0, 100)) {
     const assignMods = section.modules.filter((m) => m.modname === "assign");
     if (assignMods.length === 0) continue;
 
     lines.push(`### ${section.name || "General"}`);
     hasAny = true;
 
-    for (const mod of assignMods) {
+    for (const mod of assignMods.slice(0, 100)) {
       const detail = byModule.get(mod.id);
       if (!detail) {
         lines.push(`- **${mod.name}** *(details unavailable)*`);

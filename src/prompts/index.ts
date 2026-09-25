@@ -75,7 +75,7 @@ Steps:
 Steps:
 1. Call moodle_get_course with courseId=${courseId} to get the course structure
 2. Call moodle_list_resources with courseId=${courseId} to get all files
-3. For each file listed, read it via the MCP resource URI moodle://courses/${courseId}/files/... to get its actual content
+3. Each listed file includes an opaque moodle://files/{fileId} resource URI. Read that exact URI to get its content (or call moodle_download_file with the same fileId)
 4. Call moodle_list_assignments with courseId=${courseId} to get graded work
 5. Call moodle_get_grades with courseId=${courseId} to see grade feedback
 
@@ -142,7 +142,7 @@ Steps:
 1. Call moodle_get_course with courseId=${courseId} to see all section names and module names
 2. Call moodle_list_resources with courseId=${courseId} to see all file names
 3. Look at the section names, module names, and file names — identify which ones are likely to contain information about "${query}" (semantic reasoning, not just keyword match)
-4. For each relevant file, read it via its MCP resource URI moodle://courses/${courseId}/files/...
+4. For each relevant file, read the exact moodle://files/{fileId} resource URI returned by moodle_list_resources
 5. Synthesize a focused answer about "${query}" from what you found
 
 Format: brief intro, then the key content organized by subtopic, then which files/sections it came from.`,

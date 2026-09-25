@@ -36,6 +36,8 @@ const TEXT_MIMES = new Set([
   "application/x-yaml",
   "application/yaml",
 ]);
+const MAX_RESOURCE_COURSES = 25;
+const MAX_RESOURCE_FILES = 100;
 
 function isTextMime(mime: string): boolean {
   return mime.startsWith("text/") || TEXT_MIMES.has(mime);
@@ -55,9 +57,9 @@ export function registerResources(server: McpServer, client: MoodleClient): void
     "moodle-course-files",
     new ResourceTemplate("moodle://files/{fileId}", {
       list: async () => {
-        const courses = await client.call<Course[]>("core_enrol_get_users_courses", {
+        const courses = (await client.call<Course[]>("core_enrol_get_users_courses", {
           userid: client.userId,
-        });
+        })).slice(0, MAX_RESOURCE_COURSES);
 
         const resources: { uri: string; name: string; mimeType?: string; description?: string }[] = [];
 
@@ -71,6 +73,7 @@ export function registerResources(server: McpServer, client: MoodleClient): void
                 for (const mod of section.modules) {
                   if (!["resource", "folder"].includes(mod.modname)) continue;
                   for (const file of mod.contents ?? []) {
+                    if (resources.length >= MAX_RESOURCE_FILES) return;
                     if (file.type !== "file") continue;
                     const mime = file.mimetype ?? "application/octet-stream";
                     const fileId = await client.fileIdStore.seal({
@@ -100,11 +103,9 @@ export function registerResources(server: McpServer, client: MoodleClient): void
       },
     }),
     async (uri, { fileId }) => {
-      const ref = await client.fileIdStore.open(fileId as string, client.userId);
-      if (!ref) {
-        throw new Error("fileId is invalid, expired, or not issued to the current user");
-      }
-      const downloaded = await client.downloadFile(ref.fileurl);
+      const authorized = await client.downloadAuthorizedFile(fileId as string);
+      if (!authorized) throw new Error("File access denied. Obtain a fresh fileId from moodle_list_resources.");
+      const { ref, downloaded } = authorized;
       const mime = downloaded.mime || ref.mime || "application/octet-stream";
 
       if (isTextMime(mime)) {

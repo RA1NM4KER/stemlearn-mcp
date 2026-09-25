@@ -9,6 +9,8 @@ export interface Config {
   password?: string;
   /** Per-file download cap in bytes. Default 25 MB. */
   maxFileBytes: number;
+  /** Per-request Moodle network timeout in milliseconds. Default 20 seconds. */
+  requestTimeoutMs: number;
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -46,6 +48,7 @@ export function loadTokenFile(): TokenFile | null {
 }
 
 export const DEFAULT_MAX_FILE_MB = 25;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 
 export function parseMaxFileMb(raw: string | undefined): number {
   if (raw === undefined || raw === "") return DEFAULT_MAX_FILE_MB;
@@ -59,12 +62,26 @@ export function parseMaxFileMb(raw: string | undefined): number {
 }
 
 export function normalizeUrl(raw: string): string {
+  let url: URL;
   try {
-    const url = new URL(raw);
-    return url.origin;
+    url = new URL(raw);
   } catch {
     throw new Error(`Invalid MOODLE_URL: "${raw}" is not a valid URL`);
   }
+  const localHttpHost = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]" || url.hostname === "::1";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && localHttpHost)) {
+    throw new Error("Moodle must use HTTPS (HTTP is only permitted for localhost development)");
+  }
+  return url.origin;
+}
+
+export function parseRequestTimeoutMs(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return DEFAULT_REQUEST_TIMEOUT_MS;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1_000 || n > 120_000) {
+    throw new Error("MOODLE_MCP_REQUEST_TIMEOUT_MS must be an integer between 1000 and 120000");
+  }
+  return n;
 }
 
 export function getConfig(): Config {
@@ -94,6 +111,7 @@ export function getConfig(): Config {
   }
 
   const maxFileBytes = Math.floor(parseMaxFileMb(process.env.MOODLE_MCP_MAX_FILE_MB) * 1024 * 1024);
+  const requestTimeoutMs = parseRequestTimeoutMs(process.env.MOODLE_MCP_REQUEST_TIMEOUT_MS);
 
-  return { baseUrl, token, username, password, maxFileBytes };
+  return { baseUrl, token, username, password, maxFileBytes, requestTimeoutMs };
 }

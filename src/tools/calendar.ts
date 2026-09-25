@@ -90,6 +90,7 @@ export async function getCalendarEvents(
     return true;
   });
   events.sort((a, b) => a.timestart - b.timestart);
+  events = events.slice(0, 100);
 
   if (courseId) {
     events = events.filter((e) => e.courseid === courseId);
@@ -116,7 +117,6 @@ export async function getCalendarEvents(
     for (const e of courseEvents) {
       const type = e.eventtype ? `\`${e.eventtype}\`` : "";
       lines.push(`- **${e.name}** — ${formatDate(e.timestart)} ${type}`);
-      if (e.url) lines.push(`  [Open](${e.url})`);
       const desc = e.description ? stripHtml(e.description).slice(0, 200) : "";
       if (desc) lines.push(`  ${desc}`);
     }
@@ -132,7 +132,7 @@ export function registerCalendarTools(server: McpServer, client: MoodleClient): 
     "Get the student's upcoming deadlines and calendar events — assignments due, quizzes opening/closing, lecture/practical attendance registers, and other course calendar entries — across their courses, optionally filtered to one course. Good for 'what's coming up' / 'what's due this week' / 'what's on the calendar'. Defaults to the next 30 days.",
     {
       courseId: z.number().optional().describe("Filter to a specific course ID (optional)"),
-      daysAhead: z.number().optional().describe("How many days ahead to look (default: 30)"),
+      daysAhead: z.number().int().min(1).max(365).optional().describe("How many days ahead to look (default: 30, max: 365)"),
     },
     async ({ courseId, daysAhead }) => ({
       content: [{ type: "text" as const, text: await getCalendarEvents(client, courseId, daysAhead) }],

@@ -55,10 +55,9 @@ export async function listForums(client: MoodleClient, courseId: number): Promis
   if (forums.length === 0) return "No forums found in this course.";
 
   const lines: string[] = [`## Forums — Course ${courseId}\n`];
-  for (const forum of forums) {
+  for (const forum of forums.slice(0, 100)) {
     const discussionCount = forum.numdiscussions != null ? ` (${forum.numdiscussions} discussions)` : "";
     lines.push(`- **${forum.name}**${discussionCount} — ID: \`${forum.id}\` (use with moodle_get_forum_discussions)`);
-    lines.push(`  [Open](${client.baseUrl}/mod/forum/view.php?id=${forum.cmid})`);
   }
   return lines.join("\n");
 }
@@ -78,7 +77,7 @@ export async function getDiscussionsRaw(
     page: 0,
     perpage,
   });
-  const discussions = data.discussions ?? [];
+  const discussions = (data.discussions ?? []).slice(0, Math.min(perpage, 100));
   return [...discussions].sort((a, b) => b.timemodified - a.timemodified);
 }
 
