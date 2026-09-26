@@ -65,6 +65,28 @@ current, explicitly single-user limitations — linking does not yet mean
 multi-user or student-ready; every linked credential resolves to one fixed
 identity until real OAuth identity is added.
 
+### Continuous deployment
+
+Pushes to `main` run `.github/workflows/deploy.yml`. The workflow installs
+locked dependencies with `npm ci`, builds, tests, performs a minified Wrangler
+dry run, and deploys only when every earlier step succeeds. It can also be run
+manually with GitHub Actions' **Run workflow** control. Pull requests do not
+deploy.
+
+Before the first workflow run, add these repository secrets in GitHub under
+**Settings → Secrets and variables → Actions → New repository secret**:
+
+- `CLOUDFLARE_API_TOKEN`: a narrowly scoped Cloudflare API token with the
+  Worker deploy/edit permissions required for this Worker, restricted to the
+  relevant Cloudflare account where possible.
+- `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account ID that contains the
+  `stemlearn-mcp` Worker.
+
+GitHub Actions does not receive Moodle credentials or tokens,
+`CREDENTIAL_ENCRYPTION_KEY`, or `MCP_ACCESS_TOKEN`. Those remain Cloudflare
+Worker secrets configured with `wrangler secret put`; normal code deployments
+continue using the remotely configured values.
+
 ## MCP surface
 
 Tools cover enrolled courses and their structure, files, assignments,
