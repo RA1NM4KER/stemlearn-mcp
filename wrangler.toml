@@ -6,4 +6,12 @@ compatibility_flags = ["nodejs_compat"]
 # Private, single-user remote MCP transport (Streamable HTTP at /mcp), gated
 # by the MCP_ACCESS_TOKEN bearer secret. Local stdio remains the primary
 # supported deployment model. Secrets (MOODLE_URL, MOODLE_TOKEN,
-# MCP_ACCESS_TOKEN) are set via `wrangler secret put` — never in this file.
+# MCP_ACCESS_TOKEN, CREDENTIAL_ENCRYPTION_KEY) are set via
+# `wrangler secret put` — never in this file.
+
+# Per-user encrypted Moodle credentials + short-lived linking sessions
+# (src/linking/*). database_id is filled in after `wrangler d1 create`.
+[[d1_databases]]
+binding = "DB"
+database_name = "stemlearn-mcp-db"
+database_id = "a7752258-92f5-4ce2-8f6b-519885c2c4d3"

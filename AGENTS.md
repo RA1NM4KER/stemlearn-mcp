@@ -12,9 +12,22 @@ primary supported deployment model** (`src/server.ts`). `src/worker.ts`
 Streamable HTTP transport** at `/mcp`, gated by a Cloudflare-secret bearer
 token (`MCP_ACCESS_TOKEN`) — it is not yet a multi-user or OAuth-authenticated
 endpoint. Do not weaken or remove that bearer gate, do not add a mode where
-the Worker serves `/mcp` unauthenticated, and don't build multi-user
-credential storage (D1 tables, per-user OAuth, session management) into it
-without a deliberate design change.
+the Worker serves `/mcp` unauthenticated.
+
+`src/linking/*` implements STEMLearn account linking (`/connect`,
+`/auth/stemlearn/*`): a student completes official SU/Microsoft login and
+pastes back the resulting connection link, which is verified and stored as an
+encrypted, per-user Moodle credential in D1. **This is still a private,
+single-user deployment, not multi-user or student-ready** — every linked
+credential today resolves to one fixed identity (`DEFAULT_USER_ID` in
+`src/linking/resolve-config.ts`). The linking architecture (a
+`MoodleCredentialResolver` seam, per-user encrypted storage) is deliberately
+shaped so real OAuth identity can be substituted in later without a redesign,
+but that substitution has not happened yet — don't describe or extend this as
+multi-user without doing that work first. Never let a database-stored
+`moodle_base_url` become the actual destination for a decrypted token (see
+`src/linking/resolve-config.ts` and `moodle-host-allowlist.ts`) — only this
+deployment's own configured `MOODLE_URL` is trusted for that.
 
 ## Architecture — preserve this direction
 

@@ -1,11 +1,17 @@
+import type { D1Database } from "./linking/d1.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { configFromWorkerEnv } from "./config.js";
 import { MoodleClient, MoodleTimeoutError } from "./moodle-client.js";
 import { createStemLearnServer } from "./create-server.js";
+import { DEFAULT_USER_ID, resolveMoodleConfig } from "./linking/resolve-config.js";
+import { handleLinkComplete, handleLinkDisconnect, handleLinkStart } from "./linking/routes.js";
+import { CONNECT_PAGE_HTML } from "./linking/connect-page.js";
 
 // Private, single-user remote transport. Gated by the MCP_ACCESS_TOKEN
 // bearer secret below — this is temporary single-user authentication, not a
-// multi-user/OAuth endpoint. See AGENTS.md before extending this file.
+// multi-user/OAuth endpoint. Account linking (src/linking/*) lets the single
+// fixed identity resolve a per-user Moodle credential from D1 instead of the
+// env-secret fallback, but does not itself add multi-user support. See
+// AGENTS.md before extending this file.
 
 interface Env {
   MOODLE_URL: string;
@@ -13,6 +19,8 @@ interface Env {
   MOODLE_MCP_MAX_FILE_MB?: string;
   MOODLE_MCP_REQUEST_TIMEOUT_MS?: string;
   MCP_ACCESS_TOKEN: string;
+  DB: D1Database;
+  CREDENTIAL_ENCRYPTION_KEY?: string;
 }
 
 export function workerErrorResponse(error: unknown): Response {
@@ -87,7 +95,7 @@ async function handleMcpRequest(request: Request, env: Env): Promise<Response> {
   }
 
   try {
-    const client = await MoodleClient.create(configFromWorkerEnv(env));
+    const client = await MoodleClient.create(await resolveMoodleConfig(DEFAULT_USER_ID, env));
     const server = createStemLearnServer(client);
     // Stateless (no sessionIdGenerator) + JSON response mode: each request is
     // handled by a fresh transport/client, and the JSON-RPC response comes
@@ -114,10 +122,34 @@ export default {
       if (!(await isAuthorized(request, env))) {
         return unauthorizedResponse();
       }
-      if (!env.MOODLE_URL || !env.MOODLE_TOKEN) {
+      // Only MOODLE_URL is required upfront: the Moodle token itself may come
+      // from a linked D1 credential instead of MOODLE_TOKEN — see
+      // resolveMoodleConfig. Both paths still need a configured Moodle host.
+      if (!env.MOODLE_URL) {
         return jsonResponse(500, { error: "Moodle configuration is required.", code: "configuration_required" });
       }
       return handleMcpRequest(request, env);
+    }
+
+    if (url.pathname === "/connect" && request.method === "GET") {
+      return new Response(CONNECT_PAGE_HTML, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+
+    if (url.pathname === "/auth/stemlearn/start" && request.method === "POST") {
+      if (!(await isAuthorized(request, env))) return unauthorizedResponse();
+      return handleLinkStart(env);
+    }
+
+    if (url.pathname === "/auth/stemlearn/complete" && request.method === "POST") {
+      // Intentionally not bearer-gated: the linking-session id itself, known
+      // only to whoever /start handed it to, is this call's authority — see
+      // src/linking/routes.ts.
+      return handleLinkComplete(request, env);
+    }
+
+    if (url.pathname === "/auth/stemlearn/disconnect" && request.method === "POST") {
+      if (!(await isAuthorized(request, env))) return unauthorizedResponse();
+      return handleLinkDisconnect(env);
     }
 
     return jsonResponse(404, { error: "Not found", code: "not_found" });

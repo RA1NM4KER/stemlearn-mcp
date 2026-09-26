@@ -37,10 +37,26 @@ This repository supports two deployment modes, both built from the same
   `Authorization: Bearer <MCP_ACCESS_TOKEN>` header checked with a
   constant-time comparison; requests without it get a generic `401`. It is
   not a multi-user or OAuth-authenticated endpoint yet. Required secrets:
-  `MOODLE_URL`, `MOODLE_TOKEN`, `MCP_ACCESS_TOKEN` (set with
-  `wrangler secret put <NAME>`); optional non-secret tunables:
-  `MOODLE_MCP_MAX_FILE_MB`, `MOODLE_MCP_REQUEST_TIMEOUT_MS`. Deploy with
+  `MOODLE_URL`, `MOODLE_TOKEN`, `MCP_ACCESS_TOKEN`,
+  `CREDENTIAL_ENCRYPTION_KEY` (set with `wrangler secret put <NAME>`);
+  optional non-secret tunables: `MOODLE_MCP_MAX_FILE_MB`,
+  `MOODLE_MCP_REQUEST_TIMEOUT_MS`. Requires a D1 database bound as `DB` (see
+  `wrangler.toml` and `migrations/0001_linking.sql`). Deploy with
   `npm run deploy` (`wrangler deploy`).
+
+### Account linking (STEMLearn → remote MCP)
+
+`GET /connect` serves a 3-step page (sign in → copy connection link → paste
+connection link) that lets a student link their own STEMLearn account without
+ever giving this app their Stellenbosch/Microsoft password: they authenticate
+entirely on official SU/Microsoft pages, then paste back the resulting
+connection link. The link is verified (including a live
+`core_webservice_get_site_info` call) before anything is persisted, and the
+resulting Moodle token is stored AES-256-GCM-encrypted in D1, never in
+plaintext. See `src/linking/*` and `AGENTS.md` for the design and its
+current, explicitly single-user limitations — linking does not yet mean
+multi-user or student-ready; every linked credential resolves to one fixed
+identity until real OAuth identity is added.
 
 ## MCP surface
 
