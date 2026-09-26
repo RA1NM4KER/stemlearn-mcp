@@ -72,7 +72,9 @@ describe("courseOverview", () => {
             {
               courseid: 2722,
               gradeitems: [
-                { itemtype: "course", gradeformatted: "75.00", grademax: 100, percentageformatted: "75%" },
+                // Moodle serializes course/category grade items without a
+                // backing activity module as itemmodule: null.
+                { itemtype: "course", itemmodule: null, gradeformatted: "75.00", grademax: 100, percentageformatted: "75%" },
               ],
             },
           ],

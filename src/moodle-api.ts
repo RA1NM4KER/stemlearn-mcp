@@ -104,7 +104,9 @@ export type MoodleSubmissionStatus = z.infer<typeof MoodleSubmissionStatusSchema
 export const MoodleGradeItemSchema = MoodleObject.extend({
   itemtype: z.string(),
   itemname: z.string().nullable().optional(),
-  itemmodule: z.string().optional(),
+  // Course and category grade items have no backing activity module, and
+  // Moodle's core grade report serializes that absence as null.
+  itemmodule: z.string().nullable().optional(),
   grademax: z.number().optional().default(0),
   gradeformatted: z.string().optional().default(""),
   percentageformatted: z.string().nullable().optional(),

@@ -87,3 +87,36 @@ describe("Moodle assignment schema", () => {
     expect(MoodleAssignmentSchema.safeParse({ id: 6326, name: "Practical 2" }).success).toBe(false);
   });
 });
+
+describe("Moodle grade-report schema", () => {
+  const liveGradeItemShape = {
+    itemtype: "course",
+    itemname: null,
+    itemmodule: null,
+    categoryid: 10,
+    gradeformatted: "75.00",
+    feedback: "",
+  };
+
+  it("accepts a null itemmodule for a core course or category grade item", () => {
+    // Regression: Moodle 4.5.8's gradereport_user_get_grade_items returns
+    // null, rather than omitting itemmodule, for grade items without a
+    // backing activity module.
+    const result = MoodleGradeReportSchema.safeParse({
+      usergrades: [{ courseid: 3062, gradeitems: [liveGradeItemShape] }],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.usergrades[0]?.gradeitems[0]?.itemmodule).toBeNull();
+    }
+  });
+
+  it("still rejects a non-string, non-null itemmodule", () => {
+    const result = MoodleGradeReportSchema.safeParse({
+      usergrades: [{ courseid: 3062, gradeitems: [{ ...liveGradeItemShape, itemmodule: 42 }] }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
