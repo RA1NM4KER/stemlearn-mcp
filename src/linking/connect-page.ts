@@ -44,7 +44,11 @@ export const CONNECT_PAGE_HTML = `<!DOCTYPE html>
 
   <div class="step hidden" id="step-copy">
     <h2>Step 2: Copy your connection link</h2>
-    <p>After signing in, STEMLearn will show you a connection link. Copy the full link.</p>
+    <p>On the STEMLearn confirmation page, right-click "Click here if the app does not open
+    automatically" and choose <strong>Copy Link Address</strong>. Then return here and paste it
+    below. Don't click that text — it tries to open the Moodle mobile app.</p>
+    <p style="font-size:0.85rem;color:#666;">On a phone or tablet: press and hold the text instead,
+    then choose your browser's copy-link option.</p>
   </div>
 
   <div class="step hidden" id="step-paste">
@@ -62,8 +66,9 @@ export const CONNECT_PAGE_HTML = `<!DOCTYPE html>
 
   <details>
     <summary>Where do I find the connection link?</summary>
-    <p>After you finish signing in, STEMLearn will open a page containing a link beginning with
-    <code>moodlemobile://</code>. Copy that entire link and return here.</p>
+    <p>After you finish signing in, STEMLearn opens a confirmation page with a line reading
+    "Click here if the app does not open automatically." Don't click it — right-click it (or
+    press and hold on mobile) and copy its link address instead, then paste that here.</p>
     <p>Login happens on official Stellenbosch/Microsoft pages. We never receive your university
     password. Account linking is normally required only once.</p>
   </details>

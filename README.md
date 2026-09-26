@@ -31,18 +31,25 @@ This repository supports two deployment modes, both built from the same
   (`.auth/token.json` or `MOODLE_URL`/`MOODLE_TOKEN` env vars). This remains
   the primary supported mode.
 - **Remote (Cloudflare Worker, Streamable HTTP)** — `src/worker.ts`, exposing
-  `POST /mcp` and `GET /health`. This is a **private, single-user** remote
-  transport: the Worker holds one Moodle credential (via Cloudflare secrets,
-  never in git) and every request to `/mcp` requires an
-  `Authorization: Bearer <MCP_ACCESS_TOKEN>` header checked with a
-  constant-time comparison; requests without it get a generic `401`. It is
-  not a multi-user or OAuth-authenticated endpoint yet. Required secrets:
-  `MOODLE_URL`, `MOODLE_TOKEN`, `MCP_ACCESS_TOKEN`,
+  `POST /mcp` and `GET /health`. `/mcp` is now **OAuth 2.1-protected**
+  (authorization code + PKCE S256, via `@cloudflare/workers-oauth-provider`):
+  a standards-compliant MCP client discovers `/.well-known/oauth-protected-resource/mcp`
+  and `/.well-known/oauth-authorization-server`, registers via Dynamic Client
+  Registration (`/oauth/register`) or a Client ID Metadata Document, and
+  completes `/authorize` — which runs the STEMLearn account-linking flow as
+  its authentication step — before receiving a token scoped to `stemlearn:read`
+  (+ optional `offline_access` for refresh tokens). A legacy static-bearer
+  lane (`Authorization: Bearer <MCP_ACCESS_TOKEN>`, constant-time compared)
+  is preserved alongside it during migration, resolving only the original
+  single fixed identity; the two lanes never share identity semantics.
+  Required secrets: `MOODLE_URL`, `MOODLE_TOKEN`, `MCP_ACCESS_TOKEN`,
   `CREDENTIAL_ENCRYPTION_KEY` (set with `wrangler secret put <NAME>`);
   optional non-secret tunables: `MOODLE_MCP_MAX_FILE_MB`,
-  `MOODLE_MCP_REQUEST_TIMEOUT_MS`. Requires a D1 database bound as `DB` (see
-  `wrangler.toml` and `migrations/0001_linking.sql`). Deploy with
-  `npm run deploy` (`wrangler deploy`).
+  `MOODLE_MCP_REQUEST_TIMEOUT_MS`. Requires a D1 database bound as `DB`
+  (`wrangler.toml`, `migrations/*.sql`) and a KV namespace bound as
+  `OAUTH_KV` (used only by the OAuth provider library for its own
+  codes/tokens/clients/grants — separate from our D1 linking data). Deploy
+  with `npm run deploy` (`wrangler deploy`).
 
 ### Account linking (STEMLearn → remote MCP)
 

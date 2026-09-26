@@ -22,11 +22,11 @@ export interface LinkingEnv {
   CREDENTIAL_ENCRYPTION_KEY?: string;
 }
 
-const LINK_ISNT_VALID = "This connection link isn't valid. Please copy the full link from STEMLearn.";
-const LINK_EXPIRED = "This connection link has expired. Start again to connect STEMLearn.";
-const COULD_NOT_VERIFY = "We couldn't verify your STEMLearn account. Please try signing in again.";
-const DIFFERENT_ATTEMPT = "This connection link was created for a different sign-in attempt. Start again.";
-const SOMETHING_WENT_WRONG = "Something went wrong. Please try again.";
+export const LINK_ISNT_VALID = "This connection link isn't valid. Please copy the full link from STEMLearn.";
+export const LINK_EXPIRED = "This connection link has expired. Start again to connect STEMLearn.";
+export const COULD_NOT_VERIFY = "We couldn't verify your STEMLearn account. Please try signing in again.";
+export const DIFFERENT_ATTEMPT = "This connection link was created for a different sign-in attempt. Start again.";
+export const SOMETHING_WENT_WRONG = "Something went wrong. Please try again.";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -35,6 +35,53 @@ function jsonResponse(status: number, body: unknown): Response {
 function fail(status: number, message: string): Response {
   return jsonResponse(status, { connected: false, error: message });
 }
+
+export type ConnectionLinkVerificationResult =
+  | { ok: true; token: string; moodleUserId: number }
+  | { ok: false; status: number; message: string };
+
+/**
+ * Shared by both the legacy and OAuth linking-completion handlers: parse the
+ * pasted link, verify the Moodle passport correlation against this session's
+ * passport, then verify the token actually works against live Moodle
+ * (reusing the existing Zod-validated site-info path — no new Moodle-calling
+ * code). Returns the verified token AND the real Moodle numeric user id
+ * (needed to derive OAuth identity), or a safe, generic failure to render.
+ * Never touches session consumption or credential storage — callers decide
+ * what to do with a successful verification.
+ */
+export async function verifyConnectionLink(
+  passport: string,
+  connectionLink: string,
+  trustedBaseUrl: string,
+): Promise<ConnectionLinkVerificationResult> {
+  const parsedLink = parseConnectionLink(connectionLink);
+  if (!parsedLink.ok) return { ok: false, status: 400, message: LINK_ISNT_VALID };
+
+  // Moodle computes md5($CFG->wwwroot . $passport); wwwroot's trailing slash
+  // is not guaranteed, so check both normalized forms (verified live).
+  const expected = [trustedBaseUrl, `${trustedBaseUrl}/`].map((root) => md5(root + passport));
+  if (!expected.includes(parsedLink.value.siteHash)) {
+    return { ok: false, status: 400, message: DIFFERENT_ATTEMPT };
+  }
+
+  try {
+    const client = await MoodleClient.create({
+      baseUrl: trustedBaseUrl,
+      maxFileBytes: DEFAULT_MAX_FILE_MB * 1024 * 1024,
+      requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+      auth: { kind: "token", token: parsedLink.value.token },
+    });
+    return { ok: true, token: parsedLink.value.token, moodleUserId: client.userId };
+  } catch {
+    return { ok: false, status: 400, message: COULD_NOT_VERIFY };
+  }
+}
+
+export const CompleteRequestSchema = z.object({
+  sessionId: z.string().min(1).max(128),
+  connectionLink: z.string().min(1).max(4096),
+}).strict();
 
 export async function handleLinkStart(env: LinkingEnv): Promise<Response> {
   let trustedBaseUrl: string;
@@ -60,11 +107,6 @@ export async function handleLinkStart(env: LinkingEnv): Promise<Response> {
   }
 }
 
-const CompleteRequestSchema = z.object({
-  sessionId: z.string().min(1).max(128),
-  connectionLink: z.string().min(1).max(4096),
-}).strict();
-
 export async function handleLinkComplete(request: Request, env: LinkingEnv): Promise<Response> {
   let rawBody: unknown;
   try {
@@ -78,9 +120,9 @@ export async function handleLinkComplete(request: Request, env: LinkingEnv): Pro
 
   const session = await loadActiveLinkingSession(env.DB, sessionId);
   if (!session) return fail(400, LINK_EXPIRED);
-
-  const parsedLink = parseConnectionLink(connectionLink);
-  if (!parsedLink.ok) return fail(400, LINK_ISNT_VALID);
+  // Defense in depth: a session created by GET /authorize belongs to the
+  // OAuth completion endpoint (src/oauth/routes.ts), never this one.
+  if (session.oauthRequestJson) return fail(400, LINK_ISNT_VALID);
 
   let trustedBaseUrl: string;
   try {
@@ -89,35 +131,21 @@ export async function handleLinkComplete(request: Request, env: LinkingEnv): Pro
     return fail(500, COULD_NOT_VERIFY);
   }
 
-  // Moodle computes md5($CFG->wwwroot . $passport); wwwroot's trailing slash
-  // is not guaranteed, so check both normalized forms (verified live).
-  const expected = [trustedBaseUrl, `${trustedBaseUrl}/`].map((root) => md5(root + session.passport));
-  if (!expected.includes(parsedLink.value.siteHash)) {
-    return fail(400, DIFFERENT_ATTEMPT);
-  }
-
-  // Verify the token actually works before touching anything persistent —
-  // reuses the existing Zod-validated site-info path, no new Moodle-calling
-  // code. A malformed paste or a transient Moodle hiccup leaves the session
+  // A malformed paste or a transient Moodle hiccup leaves the session
   // untouched below, so the student can just try again without redoing SSO.
-  try {
-    await MoodleClient.create({
-      baseUrl: trustedBaseUrl,
-      maxFileBytes: DEFAULT_MAX_FILE_MB * 1024 * 1024,
-      requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
-      auth: { kind: "token", token: parsedLink.value.token },
-    });
-  } catch {
-    return fail(400, COULD_NOT_VERIFY);
-  }
+  const verified = await verifyConnectionLink(session.passport, connectionLink, trustedBaseUrl);
+  if (!verified.ok) return fail(verified.status, verified.message);
 
   // Only the request that wins this atomic consume may persist a credential.
-  const won = await finalizeLinkingSession(env.DB, sessionId);
+  // Legacy sessions always finalize under the same DEFAULT_USER_ID they were
+  // created with — this write-back only matters for the OAuth flow, which
+  // doesn't know its real userId until this point.
+  const won = await finalizeLinkingSession(env.DB, sessionId, session.userId);
   if (!won) return fail(400, LINK_EXPIRED);
 
   try {
     const key = await importCredentialKey(env.CREDENTIAL_ENCRYPTION_KEY);
-    await saveCredential(env.DB, key, session.userId, trustedBaseUrl, parsedLink.value.token);
+    await saveCredential(env.DB, key, session.userId, trustedBaseUrl, verified.token);
   } catch {
     return fail(500, SOMETHING_WENT_WRONG);
   }

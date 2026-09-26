@@ -15,6 +15,7 @@ export interface FakeSessionRow {
   created_at: number;
   expires_at: number;
   consumed_at: number | null;
+  oauth_request_json: string | null;
 }
 
 /**
@@ -48,28 +49,38 @@ class FakeStatement implements D1PreparedStatement {
       if (!row) return null;
       return { moodle_base_url: row.moodle_base_url, encrypted_token: row.encrypted_token } as unknown as T;
     }
-    if (this.sql.includes("FROM linking_sessions")) {
+    if (this.sql.includes("FROM linking_sessions") && this.sql.includes("consumed_at IS NULL")) {
       const [sessionHash, now] = this.args as [string, number];
       const row = this.db.sessions.get(sessionHash);
       if (!row || row.consumed_at !== null || row.expires_at <= now) return null;
-      return { user_id: row.user_id, passport: row.passport } as unknown as T;
+      return { user_id: row.user_id, passport: row.passport, oauth_request_json: row.oauth_request_json } as unknown as T;
+    }
+    if (this.sql.includes("FROM linking_sessions")) {
+      // Plain lookup (loadLinkingSessionUserId): no active/expiry filter.
+      const [sessionHash] = this.args as [string];
+      const row = this.db.sessions.get(sessionHash);
+      return row ? ({ user_id: row.user_id } as unknown as T) : null;
     }
     throw new Error(`FakeD1: unhandled first() query: ${this.sql}`);
   }
 
   async run(): Promise<D1RunResult> {
     if (this.sql.startsWith("INSERT INTO linking_sessions")) {
-      const [sessionHash, userId, passport, createdAt, expiresAt] = this.args as [string, string, string, number, number];
+      const [sessionHash, userId, passport, createdAt, expiresAt, oauthRequestJson] = this.args as [
+        string, string, string, number, number, string | null,
+      ];
       this.db.sessions.set(sessionHash, {
-        session_hash: sessionHash, user_id: userId, passport, created_at: createdAt, expires_at: expiresAt, consumed_at: null,
+        session_hash: sessionHash, user_id: userId, passport, created_at: createdAt, expires_at: expiresAt,
+        consumed_at: null, oauth_request_json: oauthRequestJson ?? null,
       });
       return { meta: { changes: 1 } };
     }
     if (this.sql.startsWith("UPDATE linking_sessions")) {
-      const [consumedAt, sessionHash, now] = this.args as [number, string, number];
+      const [consumedAt, userId, sessionHash, now] = this.args as [number, string, string, number];
       const row = this.db.sessions.get(sessionHash);
       if (!row || row.consumed_at !== null || row.expires_at <= now) return { meta: { changes: 0 } };
       row.consumed_at = consumedAt;
+      row.user_id = userId;
       return { meta: { changes: 1 } };
     }
     if (this.sql.startsWith("INSERT INTO moodle_credentials")) {

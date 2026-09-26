@@ -1,13 +1,17 @@
 name = "stemlearn-mcp"
 main = "src/worker.ts"
 compatibility_date = "2025-11-01"
-compatibility_flags = ["nodejs_compat"]
+# nodejs_compat: see config.ts. global_fetch_strictly_public: required by
+# @cloudflare/workers-oauth-provider's Client ID Metadata Document (CIMD)
+# support for SSRF-safe outbound fetches of client metadata documents.
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
-# Private, single-user remote MCP transport (Streamable HTTP at /mcp), gated
-# by the MCP_ACCESS_TOKEN bearer secret. Local stdio remains the primary
-# supported deployment model. Secrets (MOODLE_URL, MOODLE_TOKEN,
-# MCP_ACCESS_TOKEN, CREDENTIAL_ENCRYPTION_KEY) are set via
-# `wrangler secret put` — never in this file.
+# Remote MCP transport (Streamable HTTP at /mcp), now OAuth 2.1-protected
+# (src/oauth/provider.ts) with a legacy MCP_ACCESS_TOKEN static-bearer lane
+# preserved during migration. Local stdio remains the primary supported
+# deployment model. Secrets (MOODLE_URL, MOODLE_TOKEN, MCP_ACCESS_TOKEN,
+# CREDENTIAL_ENCRYPTION_KEY) are set via `wrangler secret put` — never in
+# this file.
 
 # Per-user encrypted Moodle credentials + short-lived linking sessions
 # (src/linking/*). database_id is filled in after `wrangler d1 create`.
@@ -15,3 +19,11 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "stemlearn-mcp-db"
 database_id = "a7752258-92f5-4ce2-8f6b-519885c2c4d3"
+
+# Required by @cloudflare/workers-oauth-provider for its own OAuth state
+# (codes/tokens/clients/grants — tokens/secrets stored as hashes only, props
+# AES-GCM-encrypted). Separate from and unrelated to our own D1 linking
+# sessions/credentials above. namespace id is filled in after creation.
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "fa0759f9be9e4ebaacb7c2061c42592f"

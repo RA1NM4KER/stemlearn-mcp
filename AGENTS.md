@@ -8,26 +8,36 @@ STEMLearn MCP is a **read-only** MCP server over a student's Moodle account.
 It never calls a Moodle write API and never exposes Moodle tokens,
 authenticated Moodle file URLs, or filesystem paths. Local **stdio is the
 primary supported deployment model** (`src/server.ts`). `src/worker.ts`
-(Cloudflare Worker, `wrangler.toml`) is a **private, single-user remote
-Streamable HTTP transport** at `/mcp`, gated by a Cloudflare-secret bearer
-token (`MCP_ACCESS_TOKEN`) — it is not yet a multi-user or OAuth-authenticated
-endpoint. Do not weaken or remove that bearer gate, do not add a mode where
-the Worker serves `/mcp` unauthenticated.
+(Cloudflare Worker, `wrangler.toml`) is the remote Streamable HTTP transport
+at `/mcp`, now **OAuth 2.1-protected** via `@cloudflare/workers-oauth-provider`
+(`src/oauth/provider.ts`) — a genuine per-user authorization-code+PKCE flow,
+with STEMLearn account linking (see below) as the authentication step. A
+legacy static-bearer lane (`MCP_ACCESS_TOKEN`, `resolveExternalToken` in
+`src/oauth/provider.ts`) is preserved alongside it during migration, resolving
+only the fixed `DEFAULT_USER_ID` identity — the two lanes are deliberately
+kept disjoint (see `src/linking/resolve-config.ts`'s two resolver functions)
+and must never be allowed to share identity semantics. Do not weaken PKCE,
+redirect-URI validation, or the OAuth resource/audience checks; do not add a
+mode where `/mcp` serves any request unauthenticated by either lane.
 
-`src/linking/*` implements STEMLearn account linking (`/connect`,
-`/auth/stemlearn/*`): a student completes official SU/Microsoft login and
-pastes back the resulting connection link, which is verified and stored as an
-encrypted, per-user Moodle credential in D1. **This is still a private,
-single-user deployment, not multi-user or student-ready** — every linked
-credential today resolves to one fixed identity (`DEFAULT_USER_ID` in
-`src/linking/resolve-config.ts`). The linking architecture (a
-`MoodleCredentialResolver` seam, per-user encrypted storage) is deliberately
-shaped so real OAuth identity can be substituted in later without a redesign,
-but that substitution has not happened yet — don't describe or extend this as
-multi-user without doing that work first. Never let a database-stored
-`moodle_base_url` become the actual destination for a decrypted token (see
+`src/linking/*` implements STEMLearn account linking: a student completes
+official SU/Microsoft login and pastes back the resulting connection link,
+which is verified and stored as an encrypted, per-user Moodle credential in
+D1. It now authenticates two different call sites: the legacy bearer-gated
+`/connect` + `/auth/stemlearn/*` flow (fixed `DEFAULT_USER_ID`, for backward
+compatibility) and the OAuth `/authorize` flow (`src/oauth/routes.ts`), which
+derives a real per-student identity from verified Moodle site-info
+(`src/oauth/identity.ts`'s `deriveStemlearnUserId` — **hashed, deliberately
+colon-free**, since `@cloudflare/workers-oauth-provider` parses its own
+authorization codes/tokens as exactly `userId:grantId:secret`; a `userId`
+containing a colon breaks token exchange outright — confirmed by a live test
+failure before this was fixed). Never let a database-stored `moodle_base_url`
+become the actual destination for a decrypted token (see
 `src/linking/resolve-config.ts` and `moodle-host-allowlist.ts`) — only this
-deployment's own configured `MOODLE_URL` is trusted for that.
+deployment's own configured `MOODLE_URL` is trusted for that. The OAuth lane
+(`resolveMoodleConfigForOAuthUser`) must never fall back to the env secret or
+the legacy `DEFAULT_USER_ID` credential when a user has no linked account —
+that would run their request as someone else's Moodle identity.
 
 ## Architecture — preserve this direction
 
